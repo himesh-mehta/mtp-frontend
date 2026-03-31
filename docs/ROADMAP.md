@@ -21,6 +21,16 @@
   - model-native tool calls
   - dotenv loading support
   - one-round tool execution + final response
+- Local toolkit package:
+  - calculator
+  - file
+  - python
+  - shell
+- Agent multi-round execution:
+  - `run_loop(max_rounds=N)`
+- Transport scaffolding:
+  - stdio envelope transport
+  - HTTP envelope transport
 
 ## Phase 2
 - Additional provider adapters:
@@ -31,7 +41,9 @@
 - Planner modes:
   - direct model-native tool calls
   - model-generated MTP plan mode
-- Multi-round tool-call loop (`max_rounds`) with stop conditions
+- advanced multi-round policies:
+  - adaptive stop conditions
+  - budget-aware continuation
 
 ## Phase 3
 - Transport and remote execution:

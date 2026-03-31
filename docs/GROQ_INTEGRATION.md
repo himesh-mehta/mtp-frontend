@@ -8,6 +8,7 @@ It supports:
 - mapping `ToolSpec` into Groq function-tool schema
 - converting Groq `tool_calls` into MTP `ExecutionPlan`
 - sending tool results back as `role="tool"` messages with `tool_call_id`
+- multi-round execution support via `Agent.run_loop(max_rounds=N)`
 
 ## Install
 
