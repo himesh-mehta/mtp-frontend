@@ -1,32 +1,59 @@
 # MTP Python
 
-MTP is a protocol-first Python library for agent tool orchestration.
+MTP is a protocol-first Python library for agent tool orchestration, built to support:
+- Lazy tool loading by toolkit/category.
+- Dependency-aware batch tool execution.
+- Policy-aware execution based on tool risk.
+- Provider adapters (now including Groq).
 
-This repository starts with:
-- A protocol layer (`mtp.protocol`) for tool calls, results, and dependency-aware execution plans.
-- A runtime (`mtp.runtime`) for lazy tool loading, caching, and sequential/parallel batch execution.
-- A lightweight agent loop (`mtp.agent`) with a provider adapter interface.
-- A mock provider and runnable example.
+## Repository structure
 
-## Why this exists
+- `src/mtp/protocol.py`: Core protocol entities (`ToolSpec`, `ToolCall`, `ExecutionPlan`, etc.).
+- `src/mtp/schema.py`: Versioned envelope + execution plan validation.
+- `src/mtp/policy.py`: Risk policy (`allow` / `ask` / `deny`).
+- `src/mtp/runtime.py`: Tool registry, lazy loading, caching, batch execution.
+- `src/mtp/agent.py`: Agent loop around provider + runtime.
+- `src/mtp/providers/`: Provider adapters (`MockPlannerProvider`, `GroqToolCallingProvider`).
+- `docs/`: Architecture, roadmap, protocol details, Groq integration guide.
 
-Most ecosystems already support tool calling. What is still fragmented is:
-- A shared execution-plan format for dependency-aware parallel batches.
-- Standardized lazy tool loading and toolkit discovery in one runtime.
-- Reusable cache semantics for tool results across turns.
+## Install
 
-MTP targets those gaps with a practical SDK and a protocol model.
-
-## Quickstart
+### Base install
 
 ```bash
 python -m venv .venv
 .venv\Scripts\activate
 pip install -e .
+```
+
+### Provider SDKs and dotenv (install separately)
+
+```bash
+pip install groq
+pip install python-dotenv
+```
+
+Copy `.env.example` to `.env` and set your key:
+
+```env
+GROQ_API_KEY=your_groq_api_key_here
+```
+
+## Quickstart
+
+### Local mock planner
+
+```bash
 python examples/quickstart.py
 ```
 
-## Run tests
+### Groq provider (real API)
+
+```bash
+python examples/groq_agent.py
+```
+
+## Tests
 
 ```bash
 python -m unittest discover -s tests -v
