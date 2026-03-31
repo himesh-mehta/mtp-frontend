@@ -55,5 +55,27 @@ class AgentLoopTests(unittest.TestCase):
         self.assertEqual(len(tool_messages), 2)
 
 
+class AgentAsyncLoopTests(unittest.IsolatedAsyncioTestCase):
+    async def test_arun_loop_multi_round(self) -> None:
+        reg = ToolRegistry()
+        reg.register_tool(
+            ToolSpec(name="calc.add", description="add"),
+            lambda a, b: a + b,
+        )
+        agent = Agent(provider=_LoopProvider(), registry=reg)
+        response = await agent.arun_loop("run tools", max_rounds=4)
+        self.assertEqual(response, "final response")
+
+    async def test_sync_run_raises_in_async_context(self) -> None:
+        reg = ToolRegistry()
+        reg.register_tool(
+            ToolSpec(name="calc.add", description="add"),
+            lambda a, b: a + b,
+        )
+        agent = Agent(provider=_LoopProvider(), registry=reg)
+        with self.assertRaises(RuntimeError):
+            agent.run_loop("run tools", max_rounds=1)
+
+
 if __name__ == "__main__":
     unittest.main()

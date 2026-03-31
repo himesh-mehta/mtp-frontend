@@ -10,6 +10,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "src"))
 
 from mtp.protocol import ExecutionPlan, ToolBatch, ToolCall, ToolRiskLevel, ToolSpec
 from mtp.runtime import RegisteredTool, ToolRegistry, ToolkitLoader
+from mtp.policy import PolicyDecision, RiskPolicy
 
 
 class DemoToolkit(ToolkitLoader):
@@ -144,6 +145,46 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(first.cached)
         self.assertTrue(second.cached)
         self.assertEqual(calls["count"], 1)
+
+    async def test_input_schema_validation(self) -> None:
+        reg = ToolRegistry()
+
+        def plus(a: int, b: int) -> int:
+            return a + b
+
+        reg.register_tool(
+            ToolSpec(
+                name="math.plus",
+                description="",
+                input_schema={
+                    "type": "object",
+                    "properties": {"a": {"type": "integer"}, "b": {"type": "integer"}},
+                    "required": ["a", "b"],
+                    "additionalProperties": False,
+                },
+            ),
+            plus,
+        )
+
+        result = await reg.execute_call(ToolCall(id="1", name="math.plus", arguments={"a": "1"}), {})
+        self.assertFalse(result.success)
+        self.assertIn("Invalid tool arguments", result.error or "")
+
+    async def test_ask_policy_can_be_approved(self) -> None:
+        policy = RiskPolicy(by_tool_name={"ops.delete": PolicyDecision.ASK})
+        reg = ToolRegistry(policy=policy, approval_handler=lambda _spec, _call, _args: True)
+        reg.register_tool(
+            ToolSpec(
+                name="ops.delete",
+                description="",
+                risk_level=ToolRiskLevel.DESTRUCTIVE,
+            ),
+            lambda path: f"deleted:{path}",
+        )
+
+        result = await reg.execute_call(ToolCall(id="1", name="ops.delete", arguments={"path": "x"}), {})
+        self.assertTrue(result.success)
+        self.assertEqual(result.output, "deleted:x")
 
 
 if __name__ == "__main__":
