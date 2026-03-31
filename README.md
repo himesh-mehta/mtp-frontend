@@ -52,6 +52,9 @@ agent = MTPAgent(
 )
 response = agent.run("Calculate 25*4+10 and list files in current directory.", max_rounds=4)
 print(response)
+
+# Stream final response tokens:
+agent.print_response("Give me a short summary.", max_rounds=4, stream=True)
 ```
 
 ## Run examples

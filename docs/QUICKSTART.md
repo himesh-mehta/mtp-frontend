@@ -51,6 +51,13 @@ result = agent.run(
     max_rounds=4,
 )
 print(result)
+
+# Or stream tokens to terminal:
+agent.print_response(
+    "Share a short summary of current directory files.",
+    max_rounds=4,
+    stream=True,
+)
 ```
 
 ## 4) Understand runtime behavior
