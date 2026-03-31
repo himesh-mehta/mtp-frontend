@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 load_dotenv(pathlib.Path(__file__).resolve().parents[1] / ".env")
 load_dotenv()
 
-def test_p(name, test_fn):
+def run_provider_check(name, test_fn):
     print(f"\n--- Testing {name} ---")
     try:
         test_fn()
@@ -53,9 +53,9 @@ def check_sambanova():
         print(f"❌ Detailed SambaNova Error: {e}")
 
 if __name__ == "__main__":
-    test_p("OpenAI", check_openai)
-    test_p("Gemini", check_gemini)
-    test_p("Anthropic", check_anthropic)
-    test_p("OpenRouter (Free)", check_openrouter)
-    test_p("Groq (Free/Fast)", check_groq)
-    test_p("SambaNova", check_sambanova)
+    run_provider_check("OpenAI", check_openai)
+    run_provider_check("Gemini", check_gemini)
+    run_provider_check("Anthropic", check_anthropic)
+    run_provider_check("OpenRouter (Free)", check_openrouter)
+    run_provider_check("Groq (Free/Fast)", check_groq)
+    run_provider_check("SambaNova", check_sambanova)
