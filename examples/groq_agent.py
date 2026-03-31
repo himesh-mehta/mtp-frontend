@@ -22,8 +22,14 @@ def main() -> None:
             "Available local toolkits include calculator, file, python, and shell. "
             "Use tools for concrete computation or file operations."
         ),
+        strict_dependency_mode=True,
     )
-    agent = Agent(provider=provider, registry=registry, debug_mode=True)
+    agent = Agent(
+        provider=provider,
+        registry=registry,
+        debug_mode=True,
+        strict_dependency_mode=True,
+    )
     reply = agent.run_loop(
         "Calculate (25 * 4) + 10 and then list files in the current directory. "
         "Give a short summary.",
