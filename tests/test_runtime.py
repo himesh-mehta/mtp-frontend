@@ -9,7 +9,7 @@ import unittest
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "src"))
 
 from mtp.protocol import ExecutionPlan, ToolBatch, ToolCall, ToolRiskLevel, ToolSpec
-from mtp.runtime import RegisteredTool, ToolRegistry, ToolkitLoader
+from mtp.runtime import ExecutionCancelledError, RegisteredTool, ToolRegistry, ToolkitLoader
 from mtp.policy import PolicyDecision, RiskPolicy
 
 
@@ -185,6 +185,27 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
         result = await reg.execute_call(ToolCall(id="1", name="ops.delete", arguments={"path": "x"}), {})
         self.assertTrue(result.success)
         self.assertEqual(result.output, "deleted:x")
+
+    async def test_execute_plan_can_be_cancelled(self) -> None:
+        reg = ToolRegistry()
+
+        reg.register_tool(ToolSpec(name="t.one", description=""), lambda: 1)
+        reg.register_tool(ToolSpec(name="t.two", description=""), lambda: 2)
+
+        plan = ExecutionPlan(
+            batches=[
+                ToolBatch(
+                    mode="sequential",
+                    calls=[
+                        ToolCall(id="a", name="t.one"),
+                        ToolCall(id="b", name="t.two"),
+                    ],
+                )
+            ]
+        )
+
+        with self.assertRaises(ExecutionCancelledError):
+            await reg.execute_plan(plan, cancel_checker=lambda: True)
 
 
 if __name__ == "__main__":
