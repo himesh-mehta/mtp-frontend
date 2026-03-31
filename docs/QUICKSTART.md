@@ -36,28 +36,17 @@ GROQ_API_KEY=your_groq_api_key_here
 ## 3) Build your first agent
 
 ```python
-from mtp import Agent, ToolRegistry, load_dotenv_if_available, register_local_toolkits
-from mtp.providers import GroqToolCallingProvider
+from mtp import MTPAgent
 
-load_dotenv_if_available()
-
-registry = ToolRegistry()
-register_local_toolkits(registry, base_dir=".")
-
-provider = GroqToolCallingProvider(
+agent = MTPAgent(
     model="llama-3.3-70b-versatile",
-    system_prompt="Use tools when useful and be concise.",
+    instructions="Use tools when useful and be concise.",
+    debug_mode=True,
     strict_dependency_mode=True,
+    base_dir=".",
 )
 
-agent = Agent(
-    provider=provider,
-    registry=registry,
-    debug_mode=True,  # prints tool plan + tool results
-    strict_dependency_mode=True,
-)
-
-result = agent.run_loop(
+result = agent.run(
     "Calculate (25*4)+10 and list current directory files in one short summary.",
     max_rounds=4,
 )
@@ -66,12 +55,15 @@ print(result)
 
 ## 4) Understand runtime behavior
 
-`run_loop` does:
+`run`/`run_loop` does:
 1. send messages + tool schemas to provider
 2. provider returns direct text or tool plan
 3. runtime executes tools (parallel/sequential by plan)
 4. tool results are added back to conversation
 5. loop continues until provider returns final text
+
+Built-in MTP system instructions are appended automatically by the framework.
+Your `instructions=` are added on top of those internal instructions.
 
 ## 5) Next steps
 
