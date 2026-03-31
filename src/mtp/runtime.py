@@ -13,6 +13,11 @@ from .schema import ToolArgumentsValidationError, validate_execution_plan, valid
 
 ToolHandler = Callable[..., Any] | Callable[..., Awaitable[Any]]
 ApprovalHandler = Callable[[ToolSpec, ToolCall, dict[str, Any]], bool | Awaitable[bool]]
+CancelChecker = Callable[[], bool]
+
+
+class ExecutionCancelledError(RuntimeError):
+    """Raised when an in-flight execution plan is cancelled."""
 
 
 class ToolkitLoader(Protocol):
@@ -228,14 +233,23 @@ class ToolRegistry:
                 approval=decision.value,
             )
 
-    async def execute_plan(self, plan: ExecutionPlan) -> list[ToolResult]:
+    async def execute_plan(
+        self,
+        plan: ExecutionPlan,
+        *,
+        cancel_checker: CancelChecker | None = None,
+    ) -> list[ToolResult]:
         validate_execution_plan(plan)
         results: dict[str, ToolResult] = {}
         ordered: list[ToolResult] = []
 
         for batch in plan.batches:
+            if cancel_checker is not None and cancel_checker():
+                raise ExecutionCancelledError("Execution plan cancelled before batch execution.")
             if batch.mode == "sequential":
                 for call in batch.calls:
+                    if cancel_checker is not None and cancel_checker():
+                        raise ExecutionCancelledError("Execution plan cancelled before tool call execution.")
                     if call.depends_on:
                         unresolved = [dep for dep in call.depends_on if dep not in results]
                         if unresolved:
@@ -255,6 +269,8 @@ class ToolRegistry:
                             f"Call {call.id} depends on unresolved calls: {unresolved}"
                         )
 
+            if cancel_checker is not None and cancel_checker():
+                raise ExecutionCancelledError("Execution plan cancelled before parallel tool execution.")
             task_calls = [self.execute_call(call, results) for call in batch.calls]
             batch_results = await asyncio.gather(*task_calls)
             for call, result in zip(batch.calls, batch_results, strict=True):
