@@ -39,7 +39,7 @@ load_dotenv_if_available()  # checks .env first, then .env.example
 ```python
 from mtp import Agent, ToolRegistry, ToolSpec
 from mtp import load_dotenv_if_available
-from mtp.providers import GroqToolCallingProvider
+from mtp.providers import Groq
 
 load_dotenv_if_available()
 
@@ -49,8 +49,8 @@ registry.register_tool(
     lambda username: {"repos": ["mtp-core"]},
 )
 
-provider = GroqToolCallingProvider(strict_dependency_mode=True)
-agent = Agent(provider=provider, registry=registry)
+provider = Groq(strict_dependency_mode=True)
+agent = Agent(provider=provider, tools=registry)
 print(agent.run("List repos for username demo-user"))
 ```
 

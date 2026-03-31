@@ -55,7 +55,7 @@ from mtp.providers import AnthropicToolCallingProvider
 
 provider = AnthropicToolCallingProvider(model="claude-...")
 registry = ToolRegistry()
-agent = MTPAgent(provider=provider, registry=registry)
+agent = MTPAgent(provider=provider, tools=registry)
 ```
 
 ## Notes
