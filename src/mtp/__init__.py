@@ -2,13 +2,6 @@ from .events import EventStreamContext
 from .config import load_dotenv_if_available
 from .policy import PolicyDecision, RiskPolicy
 from .agent import Agent, AgentAction, ProviderAdapter
-from .providers import (
-    ProviderRegistryError,
-    create_provider,
-    list_providers,
-    provider_plugin,
-    register_provider,
-)
 from .protocol import (
     ExecutionPlan,
     ToolBatch,
@@ -21,6 +14,7 @@ from .runtime import ToolRegistry, ToolkitLoader
 from .schema import CURRENT_MTP_VERSION, MessageEnvelope, validate_execution_plan
 from .simple_agent import MTPAgent
 from .strict import StrictViolation, validate_strict_dependencies
+from .tools import FunctionToolkit, mtp_tool, tool_spec_from_callable, toolkit_from_functions
 from .toolkits import (
     CalculatorToolkit,
     FileToolkit,
@@ -37,13 +31,12 @@ __all__ = [
     "CURRENT_MTP_VERSION",
     "MTPAgent",
     "EventStreamContext",
+    "mtp_tool",
+    "tool_spec_from_callable",
+    "FunctionToolkit",
+    "toolkit_from_functions",
     "MessageEnvelope",
     "ProviderAdapter",
-    "ProviderRegistryError",
-    "create_provider",
-    "list_providers",
-    "provider_plugin",
-    "register_provider",
     "PolicyDecision",
     "RiskPolicy",
     "ToolBatch",
