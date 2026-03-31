@@ -2,6 +2,13 @@ from .events import EventStreamContext
 from .config import load_dotenv_if_available
 from .policy import PolicyDecision, RiskPolicy
 from .agent import Agent, AgentAction, ProviderAdapter
+from .providers import (
+    ProviderRegistryError,
+    create_provider,
+    list_providers,
+    provider_plugin,
+    register_provider,
+)
 from .protocol import (
     ExecutionPlan,
     ToolBatch,
@@ -32,6 +39,11 @@ __all__ = [
     "EventStreamContext",
     "MessageEnvelope",
     "ProviderAdapter",
+    "ProviderRegistryError",
+    "create_provider",
+    "list_providers",
+    "provider_plugin",
+    "register_provider",
     "PolicyDecision",
     "RiskPolicy",
     "ToolBatch",
