@@ -1,9 +1,20 @@
 # Providers
 
-MTP uses explicit provider classes.  
-You instantiate the provider you want and pass it to `Agent` / `MTPAgent`.
+MTP supports both:
+- short ergonomic aliases (Agno-style), for example `Groq`
+- explicit provider class names, for example `GroqToolCallingProvider`
 
-## Built-in usage (explicit)
+Both styles are equivalent.
+
+## Built-in usage (alias style)
+
+```python
+from mtp.providers import Groq
+
+provider = Groq(model="llama-3.3-70b-versatile")
+```
+
+## Built-in usage (explicit style)
 
 ```python
 from mtp.providers import GroqToolCallingProvider
@@ -49,6 +60,7 @@ agent = MTPAgent(provider=provider, registry=registry)
 
 ## Notes
 
-- This matches the explicit style used by frameworks like Agno.
+- Alias names available: `Groq`, `OpenRouter`, `OpenAI`, `Gemini`, `Anthropic`, `SambaNova`.
+- Explicit class names remain fully supported and unchanged.
 - No provider is defaulted by core `Agent` / `MTPAgent`.
 - Different providers can expose different constructor parameters safely.

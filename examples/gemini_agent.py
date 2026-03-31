@@ -6,8 +6,7 @@ import sys
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "src"))
 
 from mtp import Agent, ToolRegistry, load_dotenv_if_available
-from mtp.providers import OpenRouterToolCallingProvider
-from mtp.providers import GeminiToolCallingProvider
+from mtp.providers import Gemini
 from mtp.toolkits import CalculatorToolkit
 
 def main():
@@ -21,7 +20,7 @@ def main():
     # 3. Setup Gemini Provider
     # Note: Using a free model for demonstration. 
     # Requires GEMINI_API_KEY in your .env file.
-    provider = GeminiToolCallingProvider(
+    provider = Gemini(
         model="gemini-2.5-flash",
     )
     
