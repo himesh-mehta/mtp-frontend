@@ -41,12 +41,14 @@ Paths are constrained to the configured `base_dir`.
 - `python.run_code`
 - `python.run_file`
 
-Execution uses constrained builtins and local scope.
+Execution defaults to isolated subprocess mode (`python -I`) with timeout.
+Unsafe in-process `exec` mode is opt-in via `allow_unsafe_exec=True`.
 
 ## `shell.*`
 - `shell.run_command`
 
-Runs commands in `base_dir` with timeout.
+Runs commands in `base_dir` with timeout and an allowlist (`echo`, `pwd`, `ls`, `dir` by default).
+Use `allowed_commands=` to customize.
 
 ## Risk and policy
 

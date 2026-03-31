@@ -25,6 +25,7 @@
 - Resolves inter-call references via `{ "$ref": "<call_id>" }`.
 - Applies result caching with TTL.
 - Enforces policy decisions before tool invocation.
+- Supports `ASK` approval flow via optional `approval_handler`.
 
 5. `mtp.agent`
 - Generic agent loop:
@@ -33,6 +34,7 @@
   - execute plan
   - return tool results to provider for final response
 - Includes `run_loop(max_rounds=N)` for multi-round tool chaining.
+- Includes async APIs: `arun()` / `arun_loop()` / `arun_loop_events(...)`.
 - Includes `run_loop_stream(...)` for text streaming.
 - Includes `run_loop_events(...)` for structured runtime event streaming.
 - Optional strict dependency enforcement (`strict_dependency_mode=True`) to reject guessed intermediate values in same-toolkit multi-call batches.
