@@ -47,6 +47,10 @@ class Agent:
             self.messages.append({"role": "assistant", "content": text})
             return text
 
+        assistant_tool_message = action.metadata.get("assistant_tool_message")
+        if isinstance(assistant_tool_message, dict):
+            self.messages.append(assistant_tool_message)
+
         results = asyncio.run(self.registry.execute_plan(action.plan))
         tool_messages = [
             {
@@ -63,4 +67,3 @@ class Agent:
         final_text = self.provider.finalize(self.messages, results)
         self.messages.append({"role": "assistant", "content": final_text})
         return final_text
-

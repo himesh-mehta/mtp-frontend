@@ -40,6 +40,8 @@ class ToolResult:
     success: bool = True
     error: str | None = None
     cached: bool = False
+    approval: str | None = None
+    skipped: bool = False
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     expires_at: datetime | None = None
 
