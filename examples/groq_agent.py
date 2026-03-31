@@ -5,7 +5,8 @@ import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "src"))
 
-from mtp import MTPAgent, ToolRegistry, create_provider, load_dotenv_if_available
+from mtp import MTPAgent, ToolRegistry, load_dotenv_if_available
+from mtp.providers import GroqToolCallingProvider
 from mtp.toolkits import CalculatorToolkit, FileToolkit, PythonToolkit, ShellToolkit
 
 def main() -> None:
@@ -17,8 +18,7 @@ def main() -> None:
     registry.register_toolkit_loader("python", PythonToolkit(base_dir=pathlib.Path.cwd()))
     registry.register_toolkit_loader("shell", ShellToolkit(base_dir=pathlib.Path.cwd()))
 
-    provider = create_provider(
-        "groq",
+    provider = GroqToolCallingProvider(
         model="moonshotai/kimi-k2-instruct",
         strict_dependency_mode=True,
     )

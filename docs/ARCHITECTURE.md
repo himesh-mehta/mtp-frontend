@@ -43,11 +43,7 @@
 - Current repo includes:
   - deterministic local planner (`SimplePlannerProvider`) for demo/testing
   - `GroqToolCallingProvider` for real model-driven tool calls
-- Provider plugin registry:
-  - `register_provider(...)`
-  - `create_provider(...)`
-  - `list_providers()`
-  - optional `@provider_plugin(...)` decorator
+- Providers are instantiated explicitly by users and passed into `Agent`/`MTPAgent`.
 
 Cross-provider configuration note:
 - API key loading is intentionally provider-agnostic in `mtp.config` (`load_dotenv_if_available`, `require_env`).
@@ -60,6 +56,10 @@ Cross-provider configuration note:
   - `python`: run code and files in constrained context
   - `shell`: run local shell commands
 - Local toolkit parameter schemas accept `{"$ref":"<tool_call_id>"}` values to enable dependency wiring in model-generated arguments.
+- Custom toolkit APIs:
+  - `@mtp_tool` decorator for Python functions
+  - `toolkit_from_functions(...)`
+  - `FunctionToolkit` for reusable toolkit loaders
 
 8. `mtp.transport`
 - `stdio` transport for line-delimited JSON envelopes.
