@@ -48,17 +48,17 @@ from mtp.toolkits import CalculatorToolkit, FileToolkit, PythonToolkit, ShellToo
 
 load_dotenv_if_available()
 
-registry = ToolRegistry()
-registry.register_toolkit_loader("calculator", CalculatorToolkit())
-registry.register_toolkit_loader("file", FileToolkit(base_dir="."))
-registry.register_toolkit_loader("python", PythonToolkit(base_dir="."))
-registry.register_toolkit_loader("shell", ShellToolkit(base_dir="."))
+tools = ToolRegistry()
+tools.register_toolkit_loader("calculator", CalculatorToolkit())
+tools.register_toolkit_loader("file", FileToolkit(base_dir="."))
+tools.register_toolkit_loader("python", PythonToolkit(base_dir="."))
+tools.register_toolkit_loader("shell", ShellToolkit(base_dir="."))
 
 provider = Groq(model="llama-3.3-70b-versatile")
 
 agent = MTPAgent(
     provider=provider,
-    registry=registry,
+    tools=tools,
     instructions="Use tools when needed and return concise answers.",
     debug_mode=True,
     strict_dependency_mode=True,

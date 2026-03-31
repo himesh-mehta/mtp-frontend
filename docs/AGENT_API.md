@@ -23,8 +23,9 @@ Source: [agent.py](/c:/Users/prajw/Downloads/MTP/src/mtp/agent.py)
 ```python
 Agent(
     provider: ProviderAdapter,
-    registry: ToolRegistry,
+    registry: ToolRegistry | None = None,
     *,
+    tools: ToolRegistry | None = None,
     debug_mode: bool = False,
     debug_logger: Callable[[str], None] | None = None,
     debug_max_chars: int = 600,
@@ -41,9 +42,13 @@ Agent(
 - Purpose: Connects the agent to a model backend and translates model responses into `AgentAction`.
 - Important: model name/config is controlled here (for example `OpenAIToolCallingProvider(model="gpt-4o")`).
 
-### `registry` (required)
+### `tools` (required, recommended)
 - Type: `ToolRegistry`
 - Purpose: Holds tools/toolkits and executes tool plans returned by the provider.
+
+### `registry` (legacy alias)
+- Type: `ToolRegistry | None`
+- Purpose: Backward-compatible alias for `tools`.
 
 ### `debug_mode`
 - Type: `bool`
@@ -99,7 +104,8 @@ Source: [simple_agent.py](/c:/Users/prajw/Downloads/MTP/src/mtp/simple_agent.py)
 MTPAgent(
     *,
     provider: ProviderAdapter,
-    registry: ToolRegistry,
+    tools: ToolRegistry | None = None,
+    registry: ToolRegistry | None = None,
     debug_mode: bool = False,
     strict_dependency_mode: bool = False,
     instructions: str | None = None,
@@ -121,16 +127,39 @@ Use `MTPAgent` when you want simpler high-level methods (`run`, `print_response`
 ### `run_loop(user_text: str, max_rounds: int = 5) -> str`
 - Multi-round tool planning/execution loop.
 - `max_rounds` must be `>= 1`.
+- Optional: `tool_call_limit` to cap total planned tool calls per run.
 
 ### `arun(user_text: str) -> str`, `arun_loop(..., max_rounds=5)`
 - Async equivalents.
 - Use these in existing asyncio applications.
+
+### `run_output(...) -> RunOutput` / `arun_output(...) -> RunOutput`
+- Structured run result with:
+  - `run_id`
+  - `final_text`
+  - `messages`
+  - `tool_results`
+  - `total_tool_calls`
+  - `cancelled`
+  - optional parsed `output` + `output_validation_error` when `output_schema` is provided
+- Supports per-run context: `user_id`, `session_id`, `metadata`.
+
+### `cancel_run(run_id: str) -> bool`
+- Cancels an active run by id.
+- Returns `True` when cancellation was accepted.
 
 ### `run_loop_stream(user_text: str, max_rounds: int = 5) -> Iterator[str]`
 - Streams text chunks.
 
 ### `run_loop_events(user_text: str, max_rounds: int = 5, stream_final: bool = True)`
 - Emits structured events (`run_started`, `plan_received`, `tool_started`, `tool_finished`, `text_chunk`, `run_completed`).
+- Optional per-run context and controls:
+  - `run_id`
+  - `user_id`
+  - `session_id`
+  - `metadata`
+  - `tool_call_limit`
+- Emits `run_cancelled` when cancellation is requested.
 
 ### `arun_loop_events(...)`
 - Async event-stream variant.
@@ -169,7 +198,7 @@ gemini_provider = GeminiToolCallingProvider(model="gemini-2.0-flash")
 Then pass provider into agent:
 
 ```python
-agent = MTPAgent(provider=openai_provider, registry=registry, debug_mode=True)
+agent = MTPAgent(provider=openai_provider, tools=registry, debug_mode=True)
 ```
 
 ## 6) Common Creation Patterns
@@ -185,7 +214,7 @@ registry = ToolRegistry()
 register_local_toolkits(registry, base_dir=".")
 
 provider = OpenAIToolCallingProvider(model="gpt-4o")
-agent = MTPAgent(provider=provider, registry=registry)
+agent = MTPAgent(provider=provider, tools=registry)
 print(agent.run("List files in this folder.", max_rounds=3))
 ```
 
@@ -194,7 +223,7 @@ print(agent.run("List files in this folder.", max_rounds=3))
 ```python
 agent = MTPAgent(
     provider=provider,
-    registry=registry,
+    tools=registry,
     debug_mode=True,
     strict_dependency_mode=True,
     instructions="Prefer precise tool usage and concise summaries.",
