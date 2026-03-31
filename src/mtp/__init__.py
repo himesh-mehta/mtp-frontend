@@ -1,3 +1,4 @@
+from .events import EventStreamContext
 from .config import load_dotenv_if_available
 from .policy import PolicyDecision, RiskPolicy
 from .agent import Agent, AgentAction, ProviderAdapter
@@ -28,6 +29,7 @@ __all__ = [
     "ExecutionPlan",
     "CURRENT_MTP_VERSION",
     "MTPAgent",
+    "EventStreamContext",
     "MessageEnvelope",
     "ProviderAdapter",
     "PolicyDecision",
