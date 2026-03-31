@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
 from pathlib import Path
 
 from .agent import Agent
@@ -23,6 +24,7 @@ class MTPAgent:
         strict_dependency_mode: bool = False,
         base_dir: str | Path = ".",
         load_dotenv: bool = True,
+        stream_chunk_size: int = 40,
     ) -> None:
         if load_dotenv:
             load_dotenv_if_available()
@@ -40,10 +42,19 @@ class MTPAgent:
             debug_mode=debug_mode,
             strict_dependency_mode=strict_dependency_mode,
             instructions=instructions,
+            stream_chunk_size=stream_chunk_size,
         )
 
     def run(self, prompt: str, *, max_rounds: int = 5) -> str:
         return self._agent.run_loop(prompt, max_rounds=max_rounds)
 
-    def print_response(self, prompt: str, *, max_rounds: int = 5) -> None:
-        print(self.run(prompt, max_rounds=max_rounds))
+    def run_stream(self, prompt: str, *, max_rounds: int = 5) -> Iterator[str]:
+        return self._agent.run_loop_stream(prompt, max_rounds=max_rounds)
+
+    def print_response(self, prompt: str, *, max_rounds: int = 5, stream: bool = False) -> None:
+        if not stream:
+            print(self.run(prompt, max_rounds=max_rounds))
+            return
+        for chunk in self.run_stream(prompt, max_rounds=max_rounds):
+            print(chunk, end="", flush=True)
+        print()

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import re
+from collections.abc import Iterator
 from typing import Any
 
 from ..agent import AgentAction, ProviderAdapter
@@ -81,6 +83,13 @@ class GroqToolCallingProvider(ProviderAdapter):
                     elif isinstance(ref_value, str) and ref_value.isdigit():
                         idx = int(ref_value)
                         normalized[k] = id_by_index.get(idx, ref_value)
+                    elif isinstance(ref_value, str):
+                        match = re.search(r"(\d+)$", ref_value)
+                        if match:
+                            idx = int(match.group(1))
+                            normalized[k] = id_by_index.get(idx, ref_value)
+                        else:
+                            normalized[k] = ref_value
                     else:
                         normalized[k] = ref_value
                 else:
@@ -261,3 +270,19 @@ class GroqToolCallingProvider(ProviderAdapter):
         if getattr(message, "tool_calls", None):
             return "Model requested an additional tool round; multi-round chaining is next on roadmap."
         return message.content or "Done."
+
+    def finalize_stream(self, messages: list[dict[str, Any]], tool_results: list[ToolResult]) -> Iterator[str]:
+        groq_messages = self._to_groq_messages(messages)
+        stream = self._client.chat.completions.create(
+            model=self.model,
+            messages=groq_messages,
+            temperature=self.temperature,
+            stream=True,
+        )
+        for chunk in stream:
+            if not getattr(chunk, "choices", None):
+                continue
+            delta = chunk.choices[0].delta
+            content = getattr(delta, "content", None)
+            if content:
+                yield content
