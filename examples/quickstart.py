@@ -59,14 +59,14 @@ def main() -> None:
     load_dotenv_if_available()
 
     # 2. Setup your tools
-    registry = ToolRegistry()
-    registry.register_toolkit_loader("github", GitHubToolkit())
+    tools = ToolRegistry()
+    tools.register_toolkit_loader("github", GitHubToolkit())
 
     # 3. Setup your REAL free provider!
     provider = OpenRouter(model="qwen/qwen3.6-plus-preview:free")
 
     # 4. Create and run the agent
-    agent = Agent(provider=provider, registry=registry, debug_mode=True)
+    agent = Agent(provider=provider, tools=tools, debug_mode=True)
     
     print("🚀 Running Agent...")
     response = agent.run("Please use my profile and open an issue.")

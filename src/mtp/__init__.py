@@ -1,7 +1,7 @@
 from .events import EventStreamContext
 from .config import load_dotenv_if_available
 from .policy import PolicyDecision, RiskPolicy
-from .agent import Agent, AgentAction, ProviderAdapter
+from .agent import Agent, AgentAction, ProviderAdapter, RunOutput
 from .protocol import (
     ExecutionPlan,
     ToolBatch,
@@ -10,7 +10,7 @@ from .protocol import (
     ToolRiskLevel,
     ToolSpec,
 )
-from .runtime import ToolRegistry, ToolkitLoader
+from .runtime import ExecutionCancelledError, ToolRegistry, ToolkitLoader
 from .schema import (
     CURRENT_MTP_VERSION,
     MessageEnvelope,
@@ -33,6 +33,7 @@ from .transport import HTTPTransportServer, run_stdio_transport
 __all__ = [
     "Agent",
     "AgentAction",
+    "RunOutput",
     "ExecutionPlan",
     "CURRENT_MTP_VERSION",
     "MTPAgent",
@@ -48,6 +49,7 @@ __all__ = [
     "ToolBatch",
     "ToolCall",
     "ToolRegistry",
+    "ExecutionCancelledError",
     "ToolResult",
     "ToolRiskLevel",
     "ToolSpec",
