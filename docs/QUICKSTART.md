@@ -110,6 +110,7 @@ Event stream includes:
 
 Full schema:
 - [Events Contract](C:\Users\prajw\Downloads\MTP\docs\EVENTS.md)
+- [Agent API Reference](C:\Users\prajw\Downloads\MTP\docs\AGENT_API.md)
 
 ## 5) Next steps
 
