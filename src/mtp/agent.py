@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
-from typing import Any, Protocol
+from typing import Any, Callable, Protocol
 
 from .protocol import ExecutionPlan, ToolResult, ToolSpec
 from .runtime import ToolRegistry
@@ -28,42 +28,85 @@ class ProviderAdapter(Protocol):
 
 
 class Agent:
-    def __init__(self, provider: ProviderAdapter, registry: ToolRegistry) -> None:
+    def __init__(
+        self,
+        provider: ProviderAdapter,
+        registry: ToolRegistry,
+        *,
+        debug_mode: bool = False,
+        debug_logger: Callable[[str], None] | None = None,
+    ) -> None:
         self.provider = provider
         self.registry = registry
+        self.debug_mode = debug_mode
+        self.debug_logger = debug_logger or print
         self.messages: list[dict[str, Any]] = []
 
+    def _debug(self, text: str) -> None:
+        if self.debug_mode:
+            self.debug_logger(f"[MTP DEBUG] {text}")
+
     def run(self, user_text: str) -> str:
+        return self.run_loop(user_text=user_text, max_rounds=1)
+
+    def run_loop(self, user_text: str, max_rounds: int = 5) -> str:
+        if max_rounds < 1:
+            raise ValueError("max_rounds must be >= 1")
+
         self.messages.append({"role": "user", "content": user_text})
+        self._debug(f"user_message={user_text!r}")
         tools = self.registry.list_tools()
-        action = self.provider.next_action(self.messages, tools)
+        self._debug(f"tools_available={len(tools)}")
+        last_results: list[ToolResult] = []
 
-        if action.response_text and action.plan is None:
-            self.messages.append({"role": "assistant", "content": action.response_text})
-            return action.response_text
+        for round_idx in range(1, max_rounds + 1):
+            self._debug(f"round={round_idx} start")
+            action = self.provider.next_action(self.messages, tools)
 
-        if action.plan is None:
-            text = "No plan and no direct response from provider."
-            self.messages.append({"role": "assistant", "content": text})
-            return text
+            if action.response_text and action.plan is None:
+                self._debug("provider returned direct response (no tool plan)")
+                self.messages.append({"role": "assistant", "content": action.response_text})
+                return action.response_text
 
-        assistant_tool_message = action.metadata.get("assistant_tool_message")
-        if isinstance(assistant_tool_message, dict):
-            self.messages.append(assistant_tool_message)
+            if action.plan is None:
+                self._debug("provider returned no plan; breaking loop")
+                break
 
-        results = asyncio.run(self.registry.execute_plan(action.plan))
-        tool_messages = [
-            {
-                "role": "tool",
-                "tool_call_id": result.call_id,
-                "tool_name": result.tool_name,
-                "content": result.output if result.success else result.error,
-                "success": result.success,
-                "cached": result.cached,
-            }
-            for result in results
-        ]
-        self.messages.extend(tool_messages)
-        final_text = self.provider.finalize(self.messages, results)
+            call_count = sum(len(batch.calls) for batch in action.plan.batches)
+            self._debug(f"plan_received batches={len(action.plan.batches)} calls={call_count}")
+            for batch_idx, batch in enumerate(action.plan.batches, start=1):
+                call_names = [call.name for call in batch.calls]
+                self._debug(f"batch#{batch_idx} mode={batch.mode} calls={call_names}")
+
+            assistant_tool_message = action.metadata.get("assistant_tool_message")
+            if isinstance(assistant_tool_message, dict):
+                self._debug("assistant tool-call message appended")
+                self.messages.append(assistant_tool_message)
+
+            last_results = asyncio.run(self.registry.execute_plan(action.plan))
+            self._debug(f"executed_calls={len(last_results)}")
+            for result in last_results:
+                self._debug(
+                    "tool_result "
+                    f"id={result.call_id} tool={result.tool_name} "
+                    f"success={result.success} cached={result.cached} "
+                    f"approval={result.approval}"
+                )
+            tool_messages = [
+                {
+                    "role": "tool",
+                    "tool_call_id": result.call_id,
+                    "tool_name": result.tool_name,
+                    "content": result.output if result.success else result.error,
+                    "success": result.success,
+                    "cached": result.cached,
+                }
+                for result in last_results
+            ]
+            self.messages.extend(tool_messages)
+
+        self._debug("calling provider.finalize")
+        final_text = self.provider.finalize(self.messages, last_results)
         self.messages.append({"role": "assistant", "content": final_text})
+        self._debug("final response generated")
         return final_text
