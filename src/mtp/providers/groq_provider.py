@@ -19,6 +19,7 @@ class GroqToolCallingProvider(ProviderAdapter):
         tool_choice: str | dict[str, Any] = "auto",
         parallel_tool_calls: bool = True,
         encourage_batch_tool_calls: bool = True,
+        strict_dependency_mode: bool = False,
         client: Any | None = None,
     ) -> None:
         self.model = model
@@ -27,8 +28,42 @@ class GroqToolCallingProvider(ProviderAdapter):
         self.tool_choice = tool_choice
         self.parallel_tool_calls = parallel_tool_calls
         self.encourage_batch_tool_calls = encourage_batch_tool_calls
+        self.strict_dependency_mode = strict_dependency_mode
         self._last_response: Any | None = None
         self._client = client or self._make_client(api_key=api_key)
+
+    def _extract_refs(self, value: Any) -> list[str]:
+        refs: list[str] = []
+        if isinstance(value, dict):
+            if "$ref" in value and isinstance(value["$ref"], str):
+                refs.append(value["$ref"])
+            for v in value.values():
+                refs.extend(self._extract_refs(v))
+            return refs
+        if isinstance(value, list):
+            for v in value:
+                refs.extend(self._extract_refs(v))
+        return refs
+
+    def _normalize_refs(self, value: Any, id_by_index: dict[int, str]) -> Any:
+        if isinstance(value, dict):
+            normalized = {}
+            for k, v in value.items():
+                if k == "$ref":
+                    ref_value = v
+                    if isinstance(ref_value, int) and ref_value in id_by_index:
+                        normalized[k] = id_by_index[ref_value]
+                    elif isinstance(ref_value, str) and ref_value.isdigit():
+                        idx = int(ref_value)
+                        normalized[k] = id_by_index.get(idx, ref_value)
+                    else:
+                        normalized[k] = ref_value
+                else:
+                    normalized[k] = self._normalize_refs(v, id_by_index)
+            return normalized
+        if isinstance(value, list):
+            return [self._normalize_refs(v, id_by_index) for v in value]
+        return value
 
     def _make_client(self, api_key: str | None) -> Any:
         try:
@@ -67,6 +102,17 @@ class GroqToolCallingProvider(ProviderAdapter):
                     "content": (
                         "When tools are needed, return all independent tool calls in one response. "
                         "Only split into later tool rounds when there is a true dependency on prior tool results."
+                    ),
+                }
+            )
+        if self.strict_dependency_mode:
+            formatted.append(
+                {
+                    "role": "system",
+                    "content": (
+                        "Strict dependency mode: if one tool call depends on another tool output, "
+                        "pass that value using a JSON ref object like {\"$ref\":\"<tool_call_id>\"} "
+                        "inside arguments. Do not hardcode derived intermediate values."
                     ),
                 }
             )
@@ -127,15 +173,19 @@ class GroqToolCallingProvider(ProviderAdapter):
         if tool_calls:
             mtp_calls: list[ToolCall] = []
             serialized_tool_calls: list[dict[str, Any]] = []
+            parsed_calls: list[tuple[int, str, str, dict[str, Any]]] = []
+            id_by_index: dict[int, str] = {}
+
             for idx, tc in enumerate(tool_calls):
                 fn_name = tc.function.name
                 raw_args = tc.function.arguments or "{}"
+                call_id = tc.id or f"call_{idx}"
+                id_by_index[idx] = call_id
                 try:
                     parsed_args = json.loads(raw_args)
                 except json.JSONDecodeError:
                     parsed_args = {"_raw_arguments": raw_args}
-                call_id = tc.id or f"call_{idx}"
-                mtp_calls.append(ToolCall(id=call_id, name=fn_name, arguments=parsed_args))
+                parsed_calls.append((idx, call_id, fn_name, parsed_args))
                 serialized_tool_calls.append(
                     {
                         "id": call_id,
@@ -144,8 +194,25 @@ class GroqToolCallingProvider(ProviderAdapter):
                     }
                 )
 
+            for idx, call_id, fn_name, parsed_args in parsed_calls:
+                _ = idx
+                normalized_args = self._normalize_refs(parsed_args, id_by_index)
+                depends_on = list(dict.fromkeys(self._extract_refs(normalized_args)))
+                mtp_calls.append(
+                    ToolCall(
+                        id=call_id,
+                        name=fn_name,
+                        arguments=normalized_args,
+                        depends_on=depends_on,
+                    )
+                )
+
+            # If model returned intra-response dependencies, preserve call order with sequential execution.
+            has_dependencies = any(call.depends_on for call in mtp_calls)
+            batch_mode = "sequential" if has_dependencies else "parallel"
+
             plan = ExecutionPlan(
-                batches=[ToolBatch(mode="parallel", calls=mtp_calls)],
+                batches=[ToolBatch(mode=batch_mode, calls=mtp_calls)],
                 metadata={"provider": "groq", "model": self.model},
             )
             return AgentAction(

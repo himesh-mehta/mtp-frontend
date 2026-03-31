@@ -7,6 +7,7 @@ from typing import Any, Callable, Protocol
 
 from .protocol import ExecutionPlan, ToolResult, ToolSpec
 from .runtime import ToolRegistry
+from .strict import validate_strict_dependencies
 
 
 @dataclass(slots=True)
@@ -37,12 +38,14 @@ class Agent:
         debug_mode: bool = False,
         debug_logger: Callable[[str], None] | None = None,
         debug_max_chars: int = 600,
+        strict_dependency_mode: bool = False,
     ) -> None:
         self.provider = provider
         self.registry = registry
         self.debug_mode = debug_mode
         self.debug_logger = debug_logger or print
         self.debug_max_chars = debug_max_chars
+        self.strict_dependency_mode = strict_dependency_mode
         self.messages: list[dict[str, Any]] = []
 
     def _debug(self, text: str) -> None:
@@ -109,6 +112,27 @@ class Agent:
             for batch_idx, batch in enumerate(action.plan.batches, start=1):
                 call_names = [call.name for call in batch.calls]
                 self._debug(f"batch#{batch_idx} mode={batch.mode} calls={call_names}")
+
+            if self.strict_dependency_mode:
+                violations = validate_strict_dependencies(action.plan)
+                if violations:
+                    self._debug(f"strict_dependency_violations={len(violations)}")
+                    for violation in violations:
+                        self._debug(
+                            f"strict_violation call_id={violation.call_id} "
+                            f"tool={violation.tool_name} message={violation.message}"
+                        )
+                    self.messages.append(
+                        {
+                            "role": "system",
+                            "content": (
+                                "Strict dependency mode is enabled. "
+                                "Replan tool calls with explicit depends_on and/or $ref "
+                                "for multi-call same-toolkit batches."
+                            ),
+                        }
+                    )
+                    continue
 
             assistant_tool_message = action.metadata.get("assistant_tool_message")
             if isinstance(assistant_tool_message, dict):
