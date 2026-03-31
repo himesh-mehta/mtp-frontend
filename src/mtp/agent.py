@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 from dataclasses import dataclass, field
+from collections.abc import Iterator
 from typing import Any, Callable, Protocol
 
 from .prompts import DEFAULT_MTP_SYSTEM_INSTRUCTIONS
@@ -29,6 +30,13 @@ class ProviderAdapter(Protocol):
     ) -> str:
         ...
 
+    def finalize_stream(
+        self,
+        messages: list[dict[str, Any]],
+        tool_results: list[ToolResult],
+    ) -> Iterator[str]:
+        ...
+
 
 class Agent:
     def __init__(
@@ -42,6 +50,7 @@ class Agent:
         strict_dependency_mode: bool = False,
         instructions: str | None = None,
         system_instructions: str | None = None,
+        stream_chunk_size: int = 40,
     ) -> None:
         self.provider = provider
         self.registry = registry
@@ -51,6 +60,7 @@ class Agent:
         self.strict_dependency_mode = strict_dependency_mode
         self.instructions = instructions
         self.system_instructions = system_instructions or DEFAULT_MTP_SYSTEM_INSTRUCTIONS
+        self.stream_chunk_size = stream_chunk_size
         self._system_seeded = False
         self.messages: list[dict[str, Any]] = []
 
@@ -73,18 +83,26 @@ class Agent:
     def run(self, user_text: str) -> str:
         return self.run_loop(user_text=user_text, max_rounds=1)
 
-    def run_loop(self, user_text: str, max_rounds: int = 5) -> str:
-        if max_rounds < 1:
-            raise ValueError("max_rounds must be >= 1")
+    def _chunk_text(self, text: str) -> Iterator[str]:
+        if self.stream_chunk_size <= 0:
+            yield text
+            return
+        for i in range(0, len(text), self.stream_chunk_size):
+            yield text[i : i + self.stream_chunk_size]
 
-        if not self._system_seeded:
-            if self.system_instructions:
-                self.messages.append({"role": "system", "content": self.system_instructions})
-                self._debug(f"mtp_system_instructions={self._short(self.system_instructions)}")
-            if self.instructions:
-                self.messages.append({"role": "system", "content": self.instructions})
-                self._debug(f"user_instructions={self._short(self.instructions)}")
-            self._system_seeded = True
+    def _seed_system_messages_if_needed(self) -> None:
+        if self._system_seeded:
+            return
+        if self.system_instructions:
+            self.messages.append({"role": "system", "content": self.system_instructions})
+            self._debug(f"mtp_system_instructions={self._short(self.system_instructions)}")
+        if self.instructions:
+            self.messages.append({"role": "system", "content": self.instructions})
+            self._debug(f"user_instructions={self._short(self.instructions)}")
+        self._system_seeded = True
+
+    def _run_tool_rounds(self, user_text: str, max_rounds: int) -> tuple[list[ToolResult], str | None]:
+        self._seed_system_messages_if_needed()
 
         self.messages.append({"role": "user", "content": user_text})
         self._debug(f"user_message={user_text!r}")
@@ -116,7 +134,7 @@ class Agent:
                 self._debug("provider returned direct response (no tool plan)")
                 self._debug(f"assistant_response={self._short(action.response_text)}")
                 self.messages.append({"role": "assistant", "content": action.response_text})
-                return action.response_text
+                return last_results, action.response_text
 
             if action.plan is None:
                 self._debug("provider returned no plan; breaking loop")
@@ -180,8 +198,46 @@ class Agent:
             ]
             self.messages.extend(tool_messages)
 
+        return last_results, None
+
+    def run_loop(self, user_text: str, max_rounds: int = 5) -> str:
+        if max_rounds < 1:
+            raise ValueError("max_rounds must be >= 1")
+
+        last_results, direct_response = self._run_tool_rounds(user_text=user_text, max_rounds=max_rounds)
+        if direct_response is not None:
+            return direct_response
+
         self._debug("calling provider.finalize")
         final_text = self.provider.finalize(self.messages, last_results)
         self.messages.append({"role": "assistant", "content": final_text})
         self._debug(f"final response generated text={self._short(final_text)}")
         return final_text
+
+    def run_loop_stream(self, user_text: str, max_rounds: int = 5) -> Iterator[str]:
+        if max_rounds < 1:
+            raise ValueError("max_rounds must be >= 1")
+
+        last_results, direct_response = self._run_tool_rounds(user_text=user_text, max_rounds=max_rounds)
+        if direct_response is not None:
+            for chunk in self._chunk_text(direct_response):
+                yield chunk
+            return
+
+        self._debug("calling provider.finalize_stream")
+        finalize_stream = getattr(self.provider, "finalize_stream", None)
+        if not callable(finalize_stream):
+            final_text = self.provider.finalize(self.messages, last_results)
+            self.messages.append({"role": "assistant", "content": final_text})
+            self._debug(f"final response generated text={self._short(final_text)}")
+            yield final_text
+            return
+
+        chunks: list[str] = []
+        for chunk in finalize_stream(self.messages, last_results):
+            if chunk:
+                chunks.append(chunk)
+                yield chunk
+        final_text = "".join(chunks)
+        self.messages.append({"role": "assistant", "content": final_text})
+        self._debug(f"final streamed response generated text={self._short(final_text)}")
