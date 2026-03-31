@@ -23,12 +23,12 @@ def main() -> None:
     load_dotenv_if_available()
     provider = Groq(model="moonshotai/kimi-k2-instruct")
 
-    registry = ToolRegistry()
-    registry.register_toolkit_loader("custom", toolkit_from_functions("custom", add, reverse_text))
+    tools = ToolRegistry()
+    tools.register_toolkit_loader("custom", toolkit_from_functions("custom", add, reverse_text))
 
     agent = MTPAgent(
         provider=provider,
-        registry=registry,
+        tools=tools,
         instructions="Use tools when useful and keep responses concise.",
     )
     print(agent.run("Add 40 and 2, then reverse 'MTP'."))
