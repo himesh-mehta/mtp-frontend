@@ -5,6 +5,7 @@ import json
 from dataclasses import dataclass, field
 from typing import Any, Callable, Protocol
 
+from .prompts import DEFAULT_MTP_SYSTEM_INSTRUCTIONS
 from .protocol import ExecutionPlan, ToolResult, ToolSpec
 from .runtime import ToolRegistry
 from .strict import validate_strict_dependencies
@@ -39,6 +40,8 @@ class Agent:
         debug_logger: Callable[[str], None] | None = None,
         debug_max_chars: int = 600,
         strict_dependency_mode: bool = False,
+        instructions: str | None = None,
+        system_instructions: str | None = None,
     ) -> None:
         self.provider = provider
         self.registry = registry
@@ -46,6 +49,9 @@ class Agent:
         self.debug_logger = debug_logger or print
         self.debug_max_chars = debug_max_chars
         self.strict_dependency_mode = strict_dependency_mode
+        self.instructions = instructions
+        self.system_instructions = system_instructions or DEFAULT_MTP_SYSTEM_INSTRUCTIONS
+        self._system_seeded = False
         self.messages: list[dict[str, Any]] = []
 
     def _debug(self, text: str) -> None:
@@ -70,6 +76,15 @@ class Agent:
     def run_loop(self, user_text: str, max_rounds: int = 5) -> str:
         if max_rounds < 1:
             raise ValueError("max_rounds must be >= 1")
+
+        if not self._system_seeded:
+            if self.system_instructions:
+                self.messages.append({"role": "system", "content": self.system_instructions})
+                self._debug(f"mtp_system_instructions={self._short(self.system_instructions)}")
+            if self.instructions:
+                self.messages.append({"role": "system", "content": self.instructions})
+                self._debug(f"user_instructions={self._short(self.instructions)}")
+            self._system_seeded = True
 
         self.messages.append({"role": "user", "content": user_text})
         self._debug(f"user_message={user_text!r}")

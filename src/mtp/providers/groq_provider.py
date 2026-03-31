@@ -45,6 +45,31 @@ class GroqToolCallingProvider(ProviderAdapter):
                 refs.extend(self._extract_refs(v))
         return refs
 
+    def _calls_to_dependency_batches(self, calls: list[ToolCall]) -> list[ToolBatch]:
+        remaining: dict[str, ToolCall] = {call.id: call for call in calls}
+        ordered_ids = [call.id for call in calls]
+        done: set[str] = set()
+        batches: list[ToolBatch] = []
+
+        while remaining:
+            ready_ids = [
+                call_id
+                for call_id in ordered_ids
+                if call_id in remaining and all(dep in done for dep in remaining[call_id].depends_on)
+            ]
+            if not ready_ids:
+                # Fallback for malformed/cyclic dependency sets; preserve deterministic execution.
+                unresolved_calls = [remaining[call_id] for call_id in ordered_ids if call_id in remaining]
+                batches.append(ToolBatch(mode="sequential", calls=unresolved_calls))
+                break
+
+            ready_calls = [remaining.pop(call_id) for call_id in ready_ids]
+            mode = "parallel" if len(ready_calls) > 1 else "sequential"
+            batches.append(ToolBatch(mode=mode, calls=ready_calls))
+            done.update(ready_ids)
+
+        return batches
+
     def _normalize_refs(self, value: Any, id_by_index: dict[int, str]) -> Any:
         if isinstance(value, dict):
             normalized = {}
@@ -207,12 +232,8 @@ class GroqToolCallingProvider(ProviderAdapter):
                     )
                 )
 
-            # If model returned intra-response dependencies, preserve call order with sequential execution.
-            has_dependencies = any(call.depends_on for call in mtp_calls)
-            batch_mode = "sequential" if has_dependencies else "parallel"
-
             plan = ExecutionPlan(
-                batches=[ToolBatch(mode=batch_mode, calls=mtp_calls)],
+                batches=self._calls_to_dependency_batches(mtp_calls),
                 metadata={"provider": "groq", "model": self.model},
             )
             return AgentAction(
