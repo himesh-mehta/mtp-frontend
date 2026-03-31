@@ -6,7 +6,7 @@ import sys
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "src"))
 
 from mtp import Agent, ToolRegistry, ToolRiskLevel, ToolSpec, ToolkitLoader, load_dotenv_if_available
-from mtp.providers import OpenRouterToolCallingProvider
+from mtp.providers import OpenRouter
 from mtp.runtime import RegisteredTool
 
 
@@ -63,7 +63,7 @@ def main() -> None:
     registry.register_toolkit_loader("github", GitHubToolkit())
 
     # 3. Setup your REAL free provider!
-    provider = OpenRouterToolCallingProvider(model="qwen/qwen3.6-plus-preview:free")
+    provider = OpenRouter(model="qwen/qwen3.6-plus-preview:free")
 
     # 4. Create and run the agent
     agent = Agent(provider=provider, registry=registry, debug_mode=True)
