@@ -36,8 +36,7 @@ GROQ_API_KEY=your_groq_api_key_here
 ## 3) Build your first agent
 
 ```python
-from mtp import MTPAgent, ToolRegistry, load_dotenv_if_available
-from mtp.providers import GroqToolCallingProvider
+from mtp import MTPAgent, ToolRegistry, create_provider, load_dotenv_if_available
 from mtp.toolkits import CalculatorToolkit, FileToolkit, PythonToolkit, ShellToolkit
 
 load_dotenv_if_available()
@@ -48,10 +47,7 @@ registry.register_toolkit_loader("file", FileToolkit(base_dir="."))
 registry.register_toolkit_loader("python", PythonToolkit(base_dir="."))
 registry.register_toolkit_loader("shell", ShellToolkit(base_dir="."))
 
-provider = GroqToolCallingProvider(
-    model="llama-3.3-70b-versatile",
-    strict_dependency_mode=True,
-)
+provider = create_provider("groq", model="llama-3.3-70b-versatile", strict_dependency_mode=True)
 
 agent = MTPAgent(
     provider=provider,
