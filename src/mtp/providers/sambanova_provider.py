@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Any
 
@@ -148,3 +149,9 @@ class SambaNovaToolCallingProvider(ProviderAdapter):
         if getattr(message, "tool_calls", None):
             return "Model requested an additional tool round; rerun with a larger max_rounds."
         return message.content or "Done."
+
+    async def anext_action(self, messages: list[dict[str, Any]], tools: list[ToolSpec]) -> AgentAction:
+        return await asyncio.to_thread(self.next_action, messages, tools)
+
+    async def afinalize(self, messages: list[dict[str, Any]], tool_results: list[ToolResult]) -> str:
+        return await asyncio.to_thread(self.finalize, messages, tool_results)

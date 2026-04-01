@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, Awaitable, Callable, Protocol
 
+from .exceptions import RetryAgentRun, StopAgentRun
 from .policy import PolicyDecision, RiskPolicy
 from .protocol import ExecutionPlan, ToolCall, ToolResult, ToolSpec
 from .schema import ToolArgumentsValidationError, validate_execution_plan, validate_tool_arguments
@@ -18,6 +19,26 @@ CancelChecker = Callable[[], bool]
 
 class ExecutionCancelledError(RuntimeError):
     """Raised when an in-flight execution plan is cancelled."""
+
+
+class ToolRetryError(RuntimeError):
+    """Raised when a tool requests retrying the run with feedback."""
+
+    def __init__(self, *, call_id: str, tool_name: str, message: str) -> None:
+        super().__init__(message)
+        self.call_id = call_id
+        self.tool_name = tool_name
+        self.message = message
+
+
+class ToolStopError(RuntimeError):
+    """Raised when a tool requests stopping/pausing the run."""
+
+    def __init__(self, *, call_id: str, tool_name: str, message: str) -> None:
+        super().__init__(message)
+        self.call_id = call_id
+        self.tool_name = tool_name
+        self.message = message
 
 
 class ToolkitLoader(Protocol):
@@ -64,6 +85,16 @@ class ToolRegistry:
         if spec.name in self._tools:
             raise ValueError(f"Tool already registered: {spec.name}")
         self._tools[spec.name] = RegisteredTool(spec=spec, handler=handler)
+        self._tool_specs_cache = None
+
+    def add_tool(self, tool: RegisteredTool) -> None:
+        self.register_tool(tool.spec, tool.handler)
+
+    def set_tools(self, tools: list[RegisteredTool]) -> None:
+        self._tools = {tool.spec.name: tool for tool in tools}
+        # Replace semantics: clear any previously attached toolkit loaders/previews.
+        self._toolkit_loaders = {}
+        self._loaded_toolkits = set()
         self._tool_specs_cache = None
 
     def register_toolkit_loader(self, toolkit_name: str, loader: ToolkitLoader) -> None:
@@ -223,6 +254,12 @@ class ToolRegistry:
             )
         except asyncio.CancelledError:
             raise
+        except RetryAgentRun as exc:
+            message = str(exc).strip() or "Tool requested a retry."
+            raise ToolRetryError(call_id=call.id, tool_name=call.name, message=message) from exc
+        except StopAgentRun as exc:
+            message = str(exc).strip() or "Tool requested the run to stop."
+            raise ToolStopError(call_id=call.id, tool_name=call.name, message=message) from exc
         except Exception as exc:  # noqa: BLE001
             return ToolResult(
                 call_id=call.id,
