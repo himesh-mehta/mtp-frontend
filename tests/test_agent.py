@@ -93,7 +93,7 @@ class AgentTests(unittest.TestCase):
         first_event = next(agent.run_loop_events("hello", max_rounds=1, stream_final=False))
         self.assertEqual(first_event["type"], "run_started")
         self.assertIn("System prompt", first_event["system_instructions"])
-        self.assertIn("User instructions", first_event["system_instructions"])
+        self.assertIn("User instructions", first_event["user_instructions"])
 
     def test_run_events_include_member_agents(self) -> None:
         member_registry = ToolRegistry()
@@ -113,6 +113,7 @@ class AgentTests(unittest.TestCase):
         self.assertEqual(member_agents[0]["id"], "calculator")
         self.assertEqual(member_agents[0]["mode"], "member")
         self.assertIn("calc.add", member_agents[0]["tools"])
+        self.assertNotIn("system_instructions", member_agents[0])
 
     def test_print_response_stream_events_pretty_format(self) -> None:
         member_registry = ToolRegistry()
@@ -135,6 +136,9 @@ class AgentTests(unittest.TestCase):
         self.assertIn("id: calculator", printed)
         self.assertIn("calc.add", printed)
         self.assertIn("system_instructions:", printed)
+        self.assertIn("user_instructions:", printed)
+        self.assertIn("orchestration_instructions:", printed)
+        self.assertIn("user_message:", printed)
         self.assertIn("------agent-run-completed------", printed)
 
 

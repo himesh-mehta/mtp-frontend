@@ -268,9 +268,14 @@ class MTPAgent:
 
     def _print_pretty_event(self, event: dict[str, Any], *, printed_chunk: bool) -> bool:
         event_type = str(event.get("type", ""))
+        stamp = str(event.get("timestamp", ""))
+        sequence = event.get("sequence")
+
+        def meta() -> str:
+            return f"[{sequence}|{stamp}]"
 
         def section(title: str) -> None:
-            print(f"\n------{title}------")
+            print(f"\n------{title}------ {meta()}")
 
         def list_block(title: str, values: list[Any]) -> None:
             print(f"{title}:")
@@ -284,11 +289,12 @@ class MTPAgent:
             section("agent-run-started")
             print(f"run_id: {event.get('run_id')}")
             print(f"max_rounds: {event.get('max_rounds')}")
-            print(f"user_message: {event.get('user_message')}")
             print(f"tools_available: {event.get('tools_available')}")
-            all_tools = [str(tool) for tool in list(event.get("tool_names", []))]
-            member_delegation_tools = {str(member.get("delegation_tool")) for member in list(event.get("member_agents", []))}
-            direct_tools = [tool for tool in all_tools if tool not in member_delegation_tools and not tool.startswith("agent.member.")]
+            direct_tools = [str(tool) for tool in list(event.get("direct_tool_names", []))]
+            if not direct_tools:
+                all_tools = [str(tool) for tool in list(event.get("tool_names", []))]
+                member_delegation_tools = {str(member.get("delegation_tool")) for member in list(event.get("member_agents", []))}
+                direct_tools = [tool for tool in all_tools if tool not in member_delegation_tools and not tool.startswith("agent.member.")]
             list_block("tools", direct_tools)
             member_agents = list(event.get("member_agents", []))
             print("sub_agents:")
@@ -300,12 +306,9 @@ class MTPAgent:
                     print(f"  - id: {member_id}")
                     print(f"    mode: {member.get('mode')}")
                     print(f"    delegation_tool: {member.get('delegation_tool')}")
-                    instructions = member.get("instructions")
-                    if instructions:
-                        print(f"    instructions: {instructions}")
-                    system_instruction = member.get("system_instructions")
-                    if system_instruction:
-                        print(f"    system_instructions: {system_instruction}")
+                    role = member.get("role")
+                    if role:
+                        print(f"    role: {role}")
                     member_tools = [str(tool) for tool in list(member.get("tools", []))]
                     if not member_tools:
                         print("    tools: (none)")
@@ -314,6 +317,9 @@ class MTPAgent:
                         for tool in member_tools:
                             print(f"      - {tool}")
             list_block("system_instructions", list(event.get("system_instructions", [])))
+            list_block("user_instructions", list(event.get("user_instructions", [])))
+            list_block("orchestration_instructions", list(event.get("orchestration_instructions", [])))
+            print(f"user_message: {event.get('user_message')}")
             return False
 
         if event_type == "round_started":
@@ -333,7 +339,7 @@ class MTPAgent:
 
         if event_type == "tool_started":
             print(
-                f"[tool-started] round={event.get('round')} "
+                f"{meta()} [tool-started] round={event.get('round')} "
                 f"tool={event.get('tool_name')} id={event.get('call_id')} "
                 f"args={event.get('arguments')}"
             )
@@ -342,14 +348,14 @@ class MTPAgent:
         if event_type == "tool_finished":
             success = "success" if event.get("success") else "failed"
             print(
-                f"[tool-finished] {success} tool={event.get('tool_name')} "
+                f"{meta()} [tool-finished] {success} tool={event.get('tool_name')} "
                 f"id={event.get('call_id')} cached={event.get('cached')} output={event.get('output')}"
             )
             return False
 
         if event_type == "batch_started":
             print(
-                f"[batch-started] round={event.get('round')} "
+                f"{meta()} [batch-started] round={event.get('round')} "
                 f"batch_index={event.get('batch_index')} "
                 f"mode={event.get('mode')} call_ids={event.get('call_ids')}"
             )
@@ -358,13 +364,30 @@ class MTPAgent:
         if event_type == "assistant_tool_message":
             message = event.get("message", {})
             tool_calls = message.get("tool_calls", []) if isinstance(message, dict) else []
-            print(f"[assistant-tool-message] round={event.get('round')} tool_calls={len(tool_calls)}")
+            print(f"{meta()} [assistant-tool-message] round={event.get('round')} tool_calls={len(tool_calls)}")
             for call in tool_calls:
                 function = call.get("function", {})
                 print(
                     "  - "
                     f"name={function.get('name')} id={call.get('id')} args={function.get('arguments')}"
                 )
+            return False
+
+        if event_type == "strict_violations":
+            section("strict-violations")
+            print(f"round: {event.get('round')}")
+            violations = list(event.get("violations", []))
+            if not violations:
+                print("violations: (none)")
+            else:
+                print("violations:")
+                for violation in violations:
+                    print(
+                        "  - "
+                        f"call_id={violation.get('call_id')} "
+                        f"tool={violation.get('tool_name')} "
+                        f"message={violation.get('message')}"
+                    )
             return False
 
         if event_type == "text_chunk":
