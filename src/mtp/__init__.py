@@ -2,6 +2,7 @@ from .events import EventStreamContext
 from .config import load_dotenv_if_available
 from .policy import PolicyDecision, RiskPolicy
 from .agent import Agent, AgentAction, ProviderAdapter, RunOutput
+from .exceptions import RetryAgentRun, StopAgentRun
 from .protocol import (
     ExecutionPlan,
     ToolBatch,
@@ -10,7 +11,7 @@ from .protocol import (
     ToolRiskLevel,
     ToolSpec,
 )
-from .runtime import ExecutionCancelledError, ToolRegistry, ToolkitLoader
+from .runtime import ExecutionCancelledError, ToolRegistry, ToolkitLoader, ToolRetryError, ToolStopError
 from .schema import (
     CURRENT_MTP_VERSION,
     MessageEnvelope,
@@ -50,6 +51,8 @@ __all__ = [
     "ToolCall",
     "ToolRegistry",
     "ExecutionCancelledError",
+    "ToolRetryError",
+    "ToolStopError",
     "ToolResult",
     "ToolRiskLevel",
     "ToolSpec",
@@ -67,4 +70,6 @@ __all__ = [
     "validate_execution_plan",
     "validate_tool_arguments",
     "ToolArgumentsValidationError",
+    "RetryAgentRun",
+    "StopAgentRun",
 ]
