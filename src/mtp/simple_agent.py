@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Iterator
+from datetime import datetime
 import json
 import textwrap
 from typing import Any
@@ -246,6 +247,10 @@ class MTPAgent:
                 "member_map": {},
                 "delegated_calls": {},
                 "tool_starts": {},
+                "run_started_at": None,
+                "tools_ok": 0,
+                "tools_failed": 0,
+                "tools_cached": 0,
             }
             for event in self.run_events(
                 prompt,
@@ -271,6 +276,76 @@ class MTPAgent:
             print(chunk, end="", flush=True)
         print()
 
+    def _parse_iso_datetime(self, value: Any) -> datetime | None:
+        if not isinstance(value, str) or "T" not in value:
+            return None
+        try:
+            return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+
+    def _format_timestamp(self, stamp: Any) -> str:
+        parsed = self._parse_iso_datetime(stamp)
+        if parsed is None:
+            return str(stamp) if stamp is not None else "-"
+        return parsed.strftime("%H:%M:%S.%f")[:-3]
+
+    def _format_meta(self, *, event_type: str, sequence: Any, stamp: Any) -> str:
+        return f"[seq={sequence} t={self._format_timestamp(stamp)}] {event_type}"
+
+    def _duration_seconds(self, start: Any, end: Any) -> str | None:
+        start_dt = self._parse_iso_datetime(start)
+        end_dt = self._parse_iso_datetime(end)
+        if start_dt is None or end_dt is None:
+            return None
+        return f"{(end_dt - start_dt).total_seconds():.3f}s"
+
+    def _short(self, value: Any, *, width: int = 180) -> str:
+        if isinstance(value, str):
+            text = value
+        else:
+            try:
+                text = json.dumps(value, ensure_ascii=True, sort_keys=True, default=str)
+            except Exception:
+                text = repr(value)
+        if len(text) <= width:
+            return text
+        return text[:width] + "...<truncated>"
+
+    def _hr(self, char: str = "-", width: int = 88) -> str:
+        return char * width
+
+    def _print_wrapped_block(self, title: str, text: Any, *, indent: str = "  ", width: int = 100) -> None:
+        print(f"{title}:")
+        raw = str(text or "")
+        if not raw.strip():
+            print(f"{indent}(none)")
+            return
+        for paragraph in raw.splitlines() or [""]:
+            wrapped = textwrap.wrap(paragraph, width=width - len(indent)) or [""]
+            for line in wrapped:
+                print(f"{indent}{line}")
+
+    def _print_json_block(self, title: str, value: Any, *, indent: str = "  ", max_chars: int = 1200) -> None:
+        try:
+            rendered = json.dumps(value, ensure_ascii=True, indent=2, sort_keys=True, default=str)
+        except Exception:
+            rendered = str(value)
+        if len(rendered) > max_chars:
+            rendered = rendered[:max_chars] + "...<truncated>"
+        self._print_wrapped_block(title, rendered, indent=indent)
+
+    def _print_bullet(self, text: Any, *, indent: str = "  ", width: int = 100) -> None:
+        raw = str(text or "")
+        lines = raw.splitlines() or [""]
+        first = True
+        for line in lines:
+            wrapped = textwrap.wrap(line, width=width - len(indent) - 2) or [""]
+            for chunk in wrapped:
+                prefix = "- " if first else "  "
+                print(f"{indent}{prefix}{chunk}")
+                first = False
+
     def _print_pretty_event(
         self,
         event: dict[str, Any],
@@ -281,138 +356,156 @@ class MTPAgent:
         event_type = str(event.get("type", ""))
         stamp = str(event.get("timestamp", ""))
         sequence = event.get("sequence")
-
-        def meta() -> str:
-            return f"[{sequence}|{stamp}]"
-
-        def section(title: str) -> None:
-            print(f"\n------{title}------ {meta()}")
-
-        def list_block(title: str, values: list[Any]) -> None:
-            print(f"{title}:")
-            if not values:
-                print("  - (none)")
-                return
-            for value in values:
-                print(f"  - {value}")
+        meta = self._format_meta(event_type=event_type, sequence=sequence, stamp=stamp)
 
         if event_type == "run_started":
-            section("agent-run-started")
-            print(f"run_id: {event.get('run_id')}")
-            print(f"max_rounds: {event.get('max_rounds')}")
-            print(f"tools_available: {event.get('tools_available')}")
+            context["run_started_at"] = stamp
+            print(f"\n{self._hr('=')}")
+            print(f"[MTP RUN START] {meta}")
+            print(self._hr("="))
+            print(f"Run ID          : {event.get('run_id')}")
+            print(f"Max Rounds      : {event.get('max_rounds')}")
+            print(f"Tools Available : {event.get('tools_available')}")
             direct_tools = [str(tool) for tool in list(event.get("direct_tool_names", []))]
             if not direct_tools:
                 all_tools = [str(tool) for tool in list(event.get("tool_names", []))]
                 member_delegation_tools = {str(member.get("delegation_tool")) for member in list(event.get("member_agents", []))}
                 direct_tools = [tool for tool in all_tools if tool not in member_delegation_tools and not tool.startswith("agent.member.")]
-            list_block("tools", direct_tools)
+            print("Tools:")
+            if direct_tools:
+                for tool in direct_tools:
+                    print(f"  - {tool}")
+            else:
+                print("  - (none)")
             member_agents = list(event.get("member_agents", []))
             context["member_map"] = {str(member.get("id")): member for member in member_agents}
-            print("sub_agents:")
-            if not member_agents:
-                print("  - (none)")
-            else:
+            if member_agents:
+                print("Sub Agents:")
                 for member in member_agents:
                     member_id = member.get("id")
-                    print(f"  - id: {member_id}")
-                    print(f"    mode: {member.get('mode')}")
-                    print(f"    delegation_tool: {member.get('delegation_tool')}")
                     role = member.get("role")
-                    if role:
-                        print(f"    role: {role}")
                     member_tools = [str(tool) for tool in list(member.get("tools", []))]
-                    if not member_tools:
-                        print("    tools: (none)")
-                    else:
-                        print("    tools:")
+                    print(f"  - id={member_id}")
+                    print(f"    mode={member.get('mode')}")
+                    print(f"    delegation_tool={member.get('delegation_tool')}")
+                    print("    tools:")
+                    if member_tools:
                         for tool in member_tools:
                             print(f"      - {tool}")
-            list_block("system_instructions", list(event.get("system_instructions", [])))
-            list_block("user_instructions", list(event.get("user_instructions", [])))
-            list_block("orchestration_instructions", list(event.get("orchestration_instructions", [])))
-            print(f"user_message: {event.get('user_message')}")
+                    else:
+                        print("      - (none)")
+                    if role:
+                        self._print_wrapped_block("    role", role, indent="      ", width=100)
+            else:
+                print("Sub Agents: (none)")
+            system_instructions = list(event.get("system_instructions", []))
+            user_instructions = list(event.get("user_instructions", []))
+            orchestration_instructions = list(event.get("orchestration_instructions", []))
+            print("System Instructions:")
+            if system_instructions:
+                for item in system_instructions:
+                    self._print_bullet(item, indent="  ", width=100)
+            else:
+                print("  - (none)")
+            print("User Instructions:")
+            if user_instructions:
+                for item in user_instructions:
+                    self._print_bullet(item, indent="  ", width=100)
+            else:
+                print("  - (none)")
+            print("Orchestration Instructions:")
+            if orchestration_instructions:
+                for item in orchestration_instructions:
+                    self._print_bullet(item, indent="  ", width=100)
+            else:
+                print("  - (none)")
+            input_validation_error = event.get("input_validation_error")
+            if input_validation_error:
+                self._print_wrapped_block("Input Validation Error", input_validation_error, indent="  ", width=100)
+            self._print_wrapped_block("User Message", event.get("user_message"), indent="  ", width=100)
             return False
 
         if event_type == "round_started":
-            section(f"round-{event.get('round')}-started")
+            round_idx = event.get("round")
+            print(f"\n{self._hr('-')}")
+            print(f"[MTP ROUND START] round={round_idx}  {meta}")
+            print(self._hr("-"))
             return False
 
         if event_type == "plan_received":
-            section("plan-received")
-            print(f"round: {event.get('round')}")
+            round_idx = event.get("round")
             batches = event.get("batches", [])
+            total_calls = sum(len(list(batch.get("calls", []))) for batch in batches)
+            print(f"[MTP PLAN] round={round_idx} batches={len(batches)} calls={total_calls}  {meta}")
             for idx, batch in enumerate(batches, start=1):
-                print(f"batch#{idx}: mode={batch.get('mode')}")
+                print(f"  Batch #{idx} ({batch.get('mode')})")
                 calls = list(batch.get("calls", []))
                 call_ids = list(batch.get("call_ids", []))
                 for call_name, call_id in zip(calls, call_ids, strict=False):
-                    print(f"  - call: {call_name} ({call_id})")
+                    print(f"    - tool={call_name}")
+                    print(f"      id={call_id}")
             return False
 
         if event_type == "tool_started":
             call_id = str(event.get("call_id"))
             context.setdefault("tool_starts", {})[call_id] = stamp
-            print(
-                f"{meta()} [tool-started] round={event.get('round')} "
-                f"tool={event.get('tool_name')} id={event.get('call_id')} "
-                f"args={event.get('arguments')}"
-            )
+            print(f"[MTP TOOL START] round={event.get('round')} tool={event.get('tool_name')} id={event.get('call_id')}  {meta}")
+            self._print_json_block("  Arguments", event.get("arguments"), indent="    ", max_chars=600)
             tool_name = str(event.get("tool_name", ""))
             if tool_name.startswith("agent.member."):
                 member_id = tool_name.removeprefix("agent.member.")
                 context.setdefault("delegated_calls", {})[call_id] = member_id
-                section(f"sub-agent-run-started:{member_id}")
-                print(f"parent_call_id: {call_id}")
-                print(f"task_args: {event.get('arguments')}")
+                print(f"  Delegation: started member={member_id} parent_call_id={call_id}")
                 member = context.get("member_map", {}).get(member_id, {})
                 role = member.get("role")
                 if role:
-                    print(f"role: {role}")
+                    self._print_wrapped_block("  Member Role", role, indent="    ", width=100)
                 member_tools = list(member.get("tools", []))
-                list_block("member_tools", member_tools)
+                print("  Member Tools:")
+                if member_tools:
+                    for tool in member_tools:
+                        print(f"    - {tool}")
+                else:
+                    print("    - (none)")
             return False
 
         if event_type == "tool_finished":
-            success = "success" if event.get("success") else "failed"
+            success = bool(event.get("success"))
+            success_text = "SUCCESS" if success else "FAILED"
             call_id = str(event.get("call_id"))
-            start_stamp = context.get("tool_starts", {}).get(call_id)
-            duration_text = ""
-            if isinstance(start_stamp, str) and "T" in start_stamp and "T" in stamp:
-                try:
-                    start_dt = start_stamp.replace("Z", "+00:00")
-                    end_dt = stamp.replace("Z", "+00:00")
-                    from datetime import datetime
-
-                    delta = datetime.fromisoformat(end_dt) - datetime.fromisoformat(start_dt)
-                    duration_text = f" duration={delta.total_seconds():.3f}s"
-                except Exception:
-                    duration_text = ""
+            if success:
+                context["tools_ok"] = int(context.get("tools_ok", 0)) + 1
+            else:
+                context["tools_failed"] = int(context.get("tools_failed", 0)) + 1
+            if event.get("cached"):
+                context["tools_cached"] = int(context.get("tools_cached", 0)) + 1
+            duration_text = self._duration_seconds(context.get("tool_starts", {}).pop(call_id, None), stamp)
+            duration_segment = f" duration={duration_text}" if duration_text else ""
+            payload = event.get("output") if success else event.get("error")
             print(
-                f"{meta()} [tool-finished] {success} tool={event.get('tool_name')} "
-                f"id={event.get('call_id')} cached={event.get('cached')}{duration_text} "
-                f"output={event.get('output')}"
+                f"[MTP TOOL END] status={success_text} tool={event.get('tool_name')} "
+                f"id={event.get('call_id')} cached={event.get('cached')}{duration_segment}  {meta}"
             )
+            self._print_json_block("  Result", payload, indent="    ", max_chars=900)
             member_id = context.get("delegated_calls", {}).pop(call_id, None)
             if member_id:
-                section(f"sub-agent-run-completed:{member_id}")
-                print(f"parent_call_id: {call_id}")
-                print(f"status: {success}")
-                print(f"result: {event.get('output')}")
+                print(
+                    f"  Delegation: completed member={member_id} parent_call_id={call_id} "
+                    f"status={success_text}"
+                )
             return False
 
         if event_type == "batch_started":
             print(
-                f"{meta()} [batch-started] round={event.get('round')} "
-                f"batch_index={event.get('batch_index')} "
-                f"mode={event.get('mode')} call_ids={event.get('call_ids')}"
+                f"[MTP BATCH] round={event.get('round')} idx={event.get('batch_index')} "
+                f"mode={event.get('mode')} call_ids={event.get('call_ids')}  {meta}"
             )
             return False
 
         if event_type == "assistant_tool_message":
             message = event.get("message", {})
             tool_calls = message.get("tool_calls", []) if isinstance(message, dict) else []
-            print(f"{meta()} [assistant-tool-message] round={event.get('round')} tool_calls={len(tool_calls)}")
+            print(f"[MTP ASSISTANT TOOL MSG] round={event.get('round')} tool_calls={len(tool_calls)}  {meta}")
             for call in tool_calls:
                 function = call.get("function", {})
                 args = function.get("arguments")
@@ -422,27 +515,19 @@ class MTPAgent:
                         args = json.dumps(parsed, ensure_ascii=True, sort_keys=True)
                     except Exception:
                         pass
-                print(
-                    "  - "
-                    f"name={function.get('name')} id={call.get('id')} args={args}"
-                )
+                print(f"  - name={function.get('name')} id={call.get('id')}")
+                self._print_wrapped_block("    args", self._short(args), indent="      ", width=100)
             return False
 
         if event_type == "strict_violations":
-            section("strict-violations")
-            print(f"round: {event.get('round')}")
             violations = list(event.get("violations", []))
-            if not violations:
-                print("violations: (none)")
-            else:
-                print("violations:")
-                for violation in violations:
-                    print(
-                        "  - "
-                        f"call_id={violation.get('call_id')} "
-                        f"tool={violation.get('tool_name')} "
-                        f"message={violation.get('message')}"
-                    )
+            print(f"[MTP STRICT VIOLATIONS] round={event.get('round')} count={len(violations)}  {meta}")
+            for violation in violations:
+                print(
+                    "  - "
+                    f"call_id={violation.get('call_id')} tool={violation.get('tool_name')} "
+                    f"message={violation.get('message')}"
+                )
             return False
 
         if event_type == "text_chunk":
@@ -455,33 +540,36 @@ class MTPAgent:
         if event_type == "run_completed":
             if printed_chunk:
                 print()
-            section("agent-run-completed")
-            print(f"rounds: {event.get('rounds')}")
-            print(f"total_tool_calls: {event.get('total_tool_calls')}")
+            elapsed = self._duration_seconds(context.get("run_started_at"), stamp)
+            elapsed_segment = f" elapsed={elapsed}" if elapsed else ""
+            print(f"\n{self._hr('=')}")
+            print(f"[MTP RUN END] {meta}")
+            print(self._hr("="))
+            print(f"Rounds          : {event.get('rounds')}")
+            print(f"Total Tool Calls: {event.get('total_tool_calls')}")
+            print(f"Tools Succeeded : {context.get('tools_ok', 0)}")
+            print(f"Tools Failed    : {context.get('tools_failed', 0)}")
+            print(f"Tools Cached    : {context.get('tools_cached', 0)}")
+            if elapsed_segment:
+                print(f"Elapsed         : {elapsed_segment.removeprefix(' elapsed=')}")
             final_text = str(event.get("final_text", ""))
-            wrapped = textwrap.wrap(final_text, width=100) or [""]
-            print("final_text:")
-            for line in wrapped:
-                print(f"  {line}")
+            self._print_wrapped_block("Final Text", final_text, indent="  ", width=100)
             return False
 
         if event_type == "run_cancelled":
-            section("agent-run-cancelled")
-            print(f"round: {event.get('round')}")
+            elapsed = self._duration_seconds(context.get("run_started_at"), stamp)
+            elapsed_segment = f" elapsed={elapsed}" if elapsed else ""
+            print(f"\n[MTP RUN CANCELLED] round={event.get('round')}{elapsed_segment}  {meta}")
             return False
 
         if event_type == "run_paused":
-            section("agent-run-paused")
-            print(f"round: {event.get('round')}")
-            print(f"tool_name: {event.get('tool_name')}")
-            print(f"reason: {event.get('reason')}")
+            print(f"\n[MTP RUN PAUSED] round={event.get('round')} tool_name={event.get('tool_name')}  {meta}")
+            self._print_wrapped_block("Reason", event.get("reason"), indent="  ", width=100)
             return False
 
         if event_type == "tool_retry_requested":
-            section("tool-retry-requested")
-            print(f"round: {event.get('round')}")
-            print(f"tool_name: {event.get('tool_name')}")
-            print(f"feedback: {event.get('feedback')}")
+            print(f"[MTP TOOL RETRY] round={event.get('round')} tool_name={event.get('tool_name')}  {meta}")
+            self._print_wrapped_block("Feedback", event.get("feedback"), indent="  ", width=100)
             return False
 
         print(json.dumps(event, default=str))

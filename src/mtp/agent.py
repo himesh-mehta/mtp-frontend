@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime
 import json
 import re
 from dataclasses import dataclass, field
@@ -218,7 +219,8 @@ class Agent:
 
     def _debug(self, text: str) -> None:
         if self.debug_mode:
-            self.debug_logger(f"[MTP DEBUG] {text}")
+            stamp = datetime.now(UTC).strftime("%H:%M:%S.%f")[:-3]
+            self.debug_logger(f"[MTP DEBUG {stamp}] {text}")
 
     def cancel_run(self, run_id: str) -> bool:
         if run_id not in self._active_runs:
