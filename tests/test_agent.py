@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import contextlib
+import io
 import pathlib
 import sys
 import unittest
@@ -7,7 +9,9 @@ import unittest
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "src"))
 
 from mtp import Agent, MTPAgent, ToolRegistry
+from mtp.agent import AgentAction, ProviderAdapter
 from mtp.providers import MockPlannerProvider
+from mtp.protocol import ToolResult
 from mtp.runtime import RegisteredTool, ToolkitLoader
 from mtp.protocol import ToolRiskLevel, ToolSpec
 
@@ -40,6 +44,17 @@ class GitHubToolkit(ToolkitLoader):
         ]
 
 
+class _DirectResponseProvider(ProviderAdapter):
+    def __init__(self, text: str = "ok") -> None:
+        self.text = text
+
+    def next_action(self, messages: list[dict], tools: list[ToolSpec]) -> AgentAction:
+        return AgentAction(response_text=self.text)
+
+    def finalize(self, messages: list[dict], tool_results: list[ToolResult]) -> str:
+        return self.text
+
+
 class AgentTests(unittest.TestCase):
     def test_mock_planner_flow(self) -> None:
         reg = ToolRegistry()
@@ -66,6 +81,61 @@ class AgentTests(unittest.TestCase):
         reg.register_toolkit_loader("github", GitHubToolkit())
         agent = MTPAgent(provider=MockPlannerProvider(), tools=reg)
         self.assertIs(agent._agent.tools, reg)
+
+    def test_run_events_include_system_instructions(self) -> None:
+        reg = ToolRegistry()
+        agent = Agent(
+            provider=_DirectResponseProvider("hi"),
+            tools=reg,
+            system_instructions="System prompt",
+            instructions="User instructions",
+        )
+        first_event = next(agent.run_loop_events("hello", max_rounds=1, stream_final=False))
+        self.assertEqual(first_event["type"], "run_started")
+        self.assertIn("System prompt", first_event["system_instructions"])
+        self.assertIn("User instructions", first_event["system_instructions"])
+
+    def test_run_events_include_member_agents(self) -> None:
+        member_registry = ToolRegistry()
+        member_registry.register_tool(ToolSpec(name="calc.add", description=""), lambda a, b: a + b)
+        member = Agent(provider=_DirectResponseProvider("member-ok"), tools=member_registry, mode="member")
+        reg = ToolRegistry()
+        agent = Agent(
+            provider=_DirectResponseProvider("ok"),
+            tools=reg,
+            mode="orchestration",
+            members={"calculator": member},
+        )
+        first_event = next(agent.run_loop_events("hello", max_rounds=1, stream_final=False))
+        self.assertEqual(first_event["type"], "run_started")
+        member_agents = first_event["member_agents"]
+        self.assertEqual(len(member_agents), 1)
+        self.assertEqual(member_agents[0]["id"], "calculator")
+        self.assertEqual(member_agents[0]["mode"], "member")
+        self.assertIn("calc.add", member_agents[0]["tools"])
+
+    def test_print_response_stream_events_pretty_format(self) -> None:
+        member_registry = ToolRegistry()
+        member_registry.register_tool(ToolSpec(name="calc.add", description=""), lambda a, b: a + b)
+        member = Agent(provider=_DirectResponseProvider("member-ok"), tools=member_registry, mode="member")
+        reg = ToolRegistry()
+        agent = MTPAgent(
+            provider=_DirectResponseProvider("hello world"),
+            tools=reg,
+            mode="orchestration",
+            members={"calculator": member},
+        )
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer):
+            agent.print_response("hello", max_rounds=1, stream=True, stream_events=True)
+        printed = buffer.getvalue()
+        self.assertIn("------agent-run-started------", printed)
+        self.assertIn("tools:", printed)
+        self.assertIn("sub_agents:", printed)
+        self.assertIn("id: calculator", printed)
+        self.assertIn("calc.add", printed)
+        self.assertIn("system_instructions:", printed)
+        self.assertIn("------agent-run-completed------", printed)
 
 
 if __name__ == "__main__":

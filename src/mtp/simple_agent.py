@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator, Iterator
 import json
+import textwrap
 from typing import Any
 
 from .agent import Agent, RunOutput
@@ -235,8 +236,12 @@ class MTPAgent:
         stream_events: bool = False,
         run_id: str | None = None,
         tool_call_limit: int | None = None,
+        event_format: str = "pretty",
     ) -> None:
         if stream_events:
+            if event_format not in {"pretty", "json"}:
+                raise ValueError("event_format must be 'pretty' or 'json'")
+            printed_chunk = False
             for event in self.run_events(
                 prompt,
                 max_rounds=max_rounds,
@@ -244,7 +249,10 @@ class MTPAgent:
                 run_id=run_id,
                 tool_call_limit=tool_call_limit,
             ):
-                print(json.dumps(event, default=str))
+                if event_format == "json":
+                    print(json.dumps(event, default=str))
+                    continue
+                printed_chunk = self._print_pretty_event(event, printed_chunk=printed_chunk)
             return
         if not stream:
             print(self.run(prompt, max_rounds=max_rounds, tool_call_limit=tool_call_limit))
@@ -257,3 +265,146 @@ class MTPAgent:
         ):
             print(chunk, end="", flush=True)
         print()
+
+    def _print_pretty_event(self, event: dict[str, Any], *, printed_chunk: bool) -> bool:
+        event_type = str(event.get("type", ""))
+
+        def section(title: str) -> None:
+            print(f"\n------{title}------")
+
+        def list_block(title: str, values: list[Any]) -> None:
+            print(f"{title}:")
+            if not values:
+                print("  - (none)")
+                return
+            for value in values:
+                print(f"  - {value}")
+
+        if event_type == "run_started":
+            section("agent-run-started")
+            print(f"run_id: {event.get('run_id')}")
+            print(f"max_rounds: {event.get('max_rounds')}")
+            print(f"user_message: {event.get('user_message')}")
+            print(f"tools_available: {event.get('tools_available')}")
+            all_tools = [str(tool) for tool in list(event.get("tool_names", []))]
+            member_delegation_tools = {str(member.get("delegation_tool")) for member in list(event.get("member_agents", []))}
+            direct_tools = [tool for tool in all_tools if tool not in member_delegation_tools and not tool.startswith("agent.member.")]
+            list_block("tools", direct_tools)
+            member_agents = list(event.get("member_agents", []))
+            print("sub_agents:")
+            if not member_agents:
+                print("  - (none)")
+            else:
+                for member in member_agents:
+                    member_id = member.get("id")
+                    print(f"  - id: {member_id}")
+                    print(f"    mode: {member.get('mode')}")
+                    print(f"    delegation_tool: {member.get('delegation_tool')}")
+                    instructions = member.get("instructions")
+                    if instructions:
+                        print(f"    instructions: {instructions}")
+                    system_instruction = member.get("system_instructions")
+                    if system_instruction:
+                        print(f"    system_instructions: {system_instruction}")
+                    member_tools = [str(tool) for tool in list(member.get("tools", []))]
+                    if not member_tools:
+                        print("    tools: (none)")
+                    else:
+                        print("    tools:")
+                        for tool in member_tools:
+                            print(f"      - {tool}")
+            list_block("system_instructions", list(event.get("system_instructions", [])))
+            return False
+
+        if event_type == "round_started":
+            section(f"round-{event.get('round')}-started")
+            return False
+
+        if event_type == "plan_received":
+            section("plan-received")
+            print(f"round: {event.get('round')}")
+            batches = event.get("batches", [])
+            for idx, batch in enumerate(batches, start=1):
+                print(
+                    f"batch#{idx}: mode={batch.get('mode')} "
+                    f"calls={batch.get('calls')} call_ids={batch.get('call_ids')}"
+                )
+            return False
+
+        if event_type == "tool_started":
+            print(
+                f"[tool-started] round={event.get('round')} "
+                f"tool={event.get('tool_name')} id={event.get('call_id')} "
+                f"args={event.get('arguments')}"
+            )
+            return False
+
+        if event_type == "tool_finished":
+            success = "success" if event.get("success") else "failed"
+            print(
+                f"[tool-finished] {success} tool={event.get('tool_name')} "
+                f"id={event.get('call_id')} cached={event.get('cached')} output={event.get('output')}"
+            )
+            return False
+
+        if event_type == "batch_started":
+            print(
+                f"[batch-started] round={event.get('round')} "
+                f"batch_index={event.get('batch_index')} "
+                f"mode={event.get('mode')} call_ids={event.get('call_ids')}"
+            )
+            return False
+
+        if event_type == "assistant_tool_message":
+            message = event.get("message", {})
+            tool_calls = message.get("tool_calls", []) if isinstance(message, dict) else []
+            print(f"[assistant-tool-message] round={event.get('round')} tool_calls={len(tool_calls)}")
+            for call in tool_calls:
+                function = call.get("function", {})
+                print(
+                    "  - "
+                    f"name={function.get('name')} id={call.get('id')} args={function.get('arguments')}"
+                )
+            return False
+
+        if event_type == "text_chunk":
+            chunk = str(event.get("chunk", ""))
+            if chunk:
+                print(chunk, end="", flush=True)
+                return True
+            return printed_chunk
+
+        if event_type == "run_completed":
+            if printed_chunk:
+                print()
+            section("agent-run-completed")
+            print(f"rounds: {event.get('rounds')}")
+            print(f"total_tool_calls: {event.get('total_tool_calls')}")
+            final_text = str(event.get("final_text", ""))
+            wrapped = textwrap.wrap(final_text, width=100) or [""]
+            print("final_text:")
+            for line in wrapped:
+                print(f"  {line}")
+            return False
+
+        if event_type == "run_cancelled":
+            section("agent-run-cancelled")
+            print(f"round: {event.get('round')}")
+            return False
+
+        if event_type == "run_paused":
+            section("agent-run-paused")
+            print(f"round: {event.get('round')}")
+            print(f"tool_name: {event.get('tool_name')}")
+            print(f"reason: {event.get('reason')}")
+            return False
+
+        if event_type == "tool_retry_requested":
+            section("tool-retry-requested")
+            print(f"round: {event.get('round')}")
+            print(f"tool_name: {event.get('tool_name')}")
+            print(f"feedback: {event.get('feedback')}")
+            return False
+
+        print(json.dumps(event, default=str))
+        return False
