@@ -448,6 +448,22 @@ class Agent:
             self._debug(f"mode_instructions={self._short(mode_instruction)}")
         self._system_seeded = True
 
+    def _member_agents_snapshot(self) -> list[dict[str, Any]]:
+        members: list[dict[str, Any]] = []
+        for member_name, member in self.members.items():
+            member_tools = [tool.name for tool in member.registry.list_tools()]
+            members.append(
+                {
+                    "id": member_name,
+                    "mode": member.mode,
+                    "delegation_tool": self._member_tool_name(member_name),
+                    "instructions": member.instructions,
+                    "system_instructions": member.system_instructions,
+                    "tools": member_tools,
+                }
+            )
+        return members
+
     def _run_tool_rounds(
         self,
         user_text: str | None,
@@ -1144,6 +1160,7 @@ class Agent:
             for message in self.messages
             if message.get("role") == "system"
         ]
+        member_agents = self._member_agents_snapshot()
         yield events.emit(
             "run_started",
             user_message=serialized_input,
@@ -1151,6 +1168,7 @@ class Agent:
             tools_available=len(tools),
             tool_names=[tool.name for tool in tools],
             system_instructions=system_instructions,
+            member_agents=member_agents,
             user_id=user_id,
             session_id=session_id,
             metadata=metadata or {},
@@ -1370,6 +1388,7 @@ class Agent:
             for message in self.messages
             if message.get("role") == "system"
         ]
+        member_agents = self._member_agents_snapshot()
         yield events.emit(
             "run_started",
             user_message=serialized_input,
@@ -1377,6 +1396,7 @@ class Agent:
             tools_available=len(tools),
             tool_names=[tool.name for tool in tools],
             system_instructions=system_instructions,
+            member_agents=member_agents,
             user_id=user_id,
             session_id=session_id,
             metadata=metadata or {},
