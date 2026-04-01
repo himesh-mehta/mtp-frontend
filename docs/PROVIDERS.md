@@ -37,6 +37,12 @@ class AnthropicToolCallingProvider(ProviderAdapter):
 
     def finalize(self, messages, tool_results) -> str:
         ...
+
+    async def anext_action(self, messages, tools) -> AgentAction:
+        ...
+
+    async def afinalize(self, messages, tool_results) -> str:
+        ...
 ```
 
 ## 2) Export provider class
@@ -64,3 +70,4 @@ agent = MTPAgent(provider=provider, tools=registry)
 - Explicit class names remain fully supported and unchanged.
 - No provider is defaulted by core `Agent` / `MTPAgent`.
 - Different providers can expose different constructor parameters safely.
+- Async provider hooks are optional. If omitted, async agent APIs fall back to running sync provider methods in threads.

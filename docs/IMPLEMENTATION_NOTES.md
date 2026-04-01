@@ -15,13 +15,24 @@ This is configurable via `RiskPolicy`.
 
 If a provider emits invalid plan graphs, runtime errors become hard to debug. We validate before execution to fail fast and clearly.
 
-## Why Groq adapter currently does one tool round
+## Why tool control-flow exceptions were added
 
-The current `Agent` contract has one planning phase and one finalization phase. That is enough for:
-- direct response
-- one model tool-call burst + final response
+Complex tool ecosystems need explicit signals to control the loop:
+- `RetryAgentRun`: feed correction guidance back to the model and replan.
+- `StopAgentRun`: intentionally stop/pause for continuation or user intervention.
 
-It does not yet support unlimited model-tool-model loops. This is planned as an `Agent.run_loop(max_rounds=N)` evolution.
+These signals now travel from tool handler -> runtime -> agent loop without being flattened into generic tool errors.
+
+## Why async provider hooks were added
+
+Agent async APIs now support provider-native async paths (`anext_action`, `afinalize`).
+If a provider only has sync methods, MTP uses thread fallback automatically.
+This keeps compatibility while preventing async app blocking when async hooks are implemented.
+
+## Why run continuation exists
+
+`continue_run()` and `acontinue_run()` enable pause/resume flows with preserved message/tool context.
+This is especially useful when a run intentionally pauses via `StopAgentRun`.
 
 ## Compatibility with your MTP vision
 
@@ -30,10 +41,13 @@ Implemented now:
 - batch execution semantics
 - plan format with dependencies
 - safety policy hook
-- provider adapter with real external model (Groq)
+- multi-provider adapter set (Groq/OpenAI/OpenRouter/Gemini/Anthropic/SambaNova)
+- run continuation and pause semantics
+- structured input schema validation
+- output model/parser model refinement pipeline
+- dynamic tool updates (`add_tool`, `set_tools`)
 
 Still needed to reach full ecosystem/library maturity:
-- transports
 - CLI scaffolding
-- toolkit packages (GitHub, Slack, Email, Drive, etc.)
+- deeper provider feature parity and capability matrix
 - docs site and benchmark suite
