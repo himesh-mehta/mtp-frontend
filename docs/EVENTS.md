@@ -34,8 +34,12 @@ Every event includes:
   - `max_rounds`
   - `tools_available`
   - `tool_names`
+  - `direct_tool_names`
+  - `delegation_tool_names`
   - `system_instructions`
-  - `member_agents`: list of `{id, mode, delegation_tool, instructions, system_instructions, tools}`
+  - `user_instructions`
+  - `orchestration_instructions`
+  - `member_agents`: list of `{id, mode, delegation_tool, role, tools}`
 
 - `round_started`
   - `round`

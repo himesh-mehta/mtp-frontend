@@ -457,8 +457,7 @@ class Agent:
                     "id": member_name,
                     "mode": member.mode,
                     "delegation_tool": self._member_tool_name(member_name),
-                    "instructions": member.instructions,
-                    "system_instructions": member.system_instructions,
+                    "role": member.instructions,
                     "tools": member_tools,
                 }
             )
@@ -1155,19 +1154,24 @@ class Agent:
         self._seed_system_messages_if_needed()
         self._append_message({"role": "user", "content": serialized_input})
         tools = self.registry.list_tools()
-        system_instructions = [
-            str(message.get("content", ""))
-            for message in self.messages
-            if message.get("role") == "system"
-        ]
+        mode_instruction = self._build_mode_system_instruction()
+        system_instructions = [self.system_instructions] if self.system_instructions else []
+        user_instructions = [self.instructions] if self.instructions else []
+        orchestration_instructions = [mode_instruction] if mode_instruction else []
         member_agents = self._member_agents_snapshot()
+        direct_tool_names = [tool.name for tool in tools if not tool.name.startswith("agent.member.")]
+        delegation_tool_names = [tool.name for tool in tools if tool.name.startswith("agent.member.")]
         yield events.emit(
             "run_started",
             user_message=serialized_input,
             max_rounds=max_rounds,
             tools_available=len(tools),
             tool_names=[tool.name for tool in tools],
+            direct_tool_names=direct_tool_names,
+            delegation_tool_names=delegation_tool_names,
             system_instructions=system_instructions,
+            user_instructions=user_instructions,
+            orchestration_instructions=orchestration_instructions,
             member_agents=member_agents,
             user_id=user_id,
             session_id=session_id,
@@ -1383,19 +1387,24 @@ class Agent:
         self._seed_system_messages_if_needed()
         self._append_message({"role": "user", "content": serialized_input})
         tools = self.registry.list_tools()
-        system_instructions = [
-            str(message.get("content", ""))
-            for message in self.messages
-            if message.get("role") == "system"
-        ]
+        mode_instruction = self._build_mode_system_instruction()
+        system_instructions = [self.system_instructions] if self.system_instructions else []
+        user_instructions = [self.instructions] if self.instructions else []
+        orchestration_instructions = [mode_instruction] if mode_instruction else []
         member_agents = self._member_agents_snapshot()
+        direct_tool_names = [tool.name for tool in tools if not tool.name.startswith("agent.member.")]
+        delegation_tool_names = [tool.name for tool in tools if tool.name.startswith("agent.member.")]
         yield events.emit(
             "run_started",
             user_message=serialized_input,
             max_rounds=max_rounds,
             tools_available=len(tools),
             tool_names=[tool.name for tool in tools],
+            direct_tool_names=direct_tool_names,
+            delegation_tool_names=delegation_tool_names,
             system_instructions=system_instructions,
+            user_instructions=user_instructions,
+            orchestration_instructions=orchestration_instructions,
             member_agents=member_agents,
             user_id=user_id,
             session_id=session_id,
