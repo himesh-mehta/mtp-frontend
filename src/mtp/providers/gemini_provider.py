@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from ..agent import AgentAction, ProviderAdapter
@@ -177,3 +178,9 @@ class GeminiToolCallingProvider(ProviderAdapter):
             config={"temperature": self.temperature},
         )
         return getattr(response, "text", "") or "Done."
+
+    async def anext_action(self, messages: list[dict[str, Any]], tools: list[ToolSpec]) -> AgentAction:
+        return await asyncio.to_thread(self.next_action, messages, tools)
+
+    async def afinalize(self, messages: list[dict[str, Any]], tool_results: list[ToolResult]) -> str:
+        return await asyncio.to_thread(self.finalize, messages, tool_results)

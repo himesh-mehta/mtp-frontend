@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 from collections.abc import Iterator
@@ -286,3 +287,9 @@ class GroqToolCallingProvider(ProviderAdapter):
             content = getattr(delta, "content", None)
             if content:
                 yield content
+
+    async def anext_action(self, messages: list[dict[str, Any]], tools: list[ToolSpec]) -> AgentAction:
+        return await asyncio.to_thread(self.next_action, messages, tools)
+
+    async def afinalize(self, messages: list[dict[str, Any]], tool_results: list[ToolResult]) -> str:
+        return await asyncio.to_thread(self.finalize, messages, tool_results)
