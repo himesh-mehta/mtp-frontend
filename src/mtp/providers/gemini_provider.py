@@ -6,7 +6,7 @@ from typing import Any
 from ..agent import AgentAction, ProviderAdapter
 from ..config import require_env
 from ..protocol import ExecutionPlan, ToolCall, ToolResult, ToolSpec
-from .common import calls_to_dependency_batches, extract_refs, normalize_refs
+from .common import calls_to_dependency_batches, extract_refs, extract_usage_metrics, normalize_refs
 
 
 class GeminiToolCallingProvider(ProviderAdapter):
@@ -25,6 +25,7 @@ class GeminiToolCallingProvider(ProviderAdapter):
     ) -> None:
         self.model_name = model
         self.temperature = temperature
+        self._last_finalize_usage: dict[str, int] | None = None
         self._client = client or self._make_client(api_key=api_key)
 
     def _make_client(self, api_key: str | None) -> Any:
@@ -124,6 +125,10 @@ class GeminiToolCallingProvider(ProviderAdapter):
             contents=prompt,
             config=config,
         )
+        usage = extract_usage_metrics(response)
+        action_meta: dict[str, Any] = {"provider": "gemini", "model": self.model_name}
+        if usage:
+            action_meta["usage"] = usage
 
         calls: list[ToolCall] = []
         serialized_tool_calls: list[dict[str, Any]] = []
@@ -160,15 +165,16 @@ class GeminiToolCallingProvider(ProviderAdapter):
             return AgentAction(
                 plan=plan,
                 metadata={
+                    **action_meta,
                     "assistant_tool_message": {
                         "role": "assistant",
                         "content": getattr(response, "text", "") or "",
                         "tool_calls": serialized_tool_calls,
-                    }
+                    },
                 },
             )
 
-        return AgentAction(response_text=getattr(response, "text", "") or "")
+        return AgentAction(response_text=getattr(response, "text", "") or "", metadata=action_meta)
 
     def finalize(self, messages: list[dict[str, Any]], tool_results: list[ToolResult]) -> str:
         prompt = self._to_gemini_prompt(messages)
@@ -177,6 +183,7 @@ class GeminiToolCallingProvider(ProviderAdapter):
             contents=prompt,
             config={"temperature": self.temperature},
         )
+        self._last_finalize_usage = extract_usage_metrics(response) or None
         return getattr(response, "text", "") or "Done."
 
     async def anext_action(self, messages: list[dict[str, Any]], tools: list[ToolSpec]) -> AgentAction:
