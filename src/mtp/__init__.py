@@ -24,9 +24,14 @@ from .strict import StrictViolation, validate_strict_dependencies
 from .tools import FunctionToolkit, mtp_tool, tool_spec_from_callable, toolkit_from_functions
 from .toolkits import (
     CalculatorToolkit,
+    Crawl4aiToolkit,
     FileToolkit,
+    Newspaper4kToolkit,
+    NewspaperToolkit,
     PythonToolkit,
     ShellToolkit,
+    WebsiteToolkit,
+    WikipediaToolkit,
     register_local_toolkits,
 )
 from .transport import HTTPTransportServer, run_stdio_transport
@@ -58,9 +63,14 @@ __all__ = [
     "ToolSpec",
     "ToolkitLoader",
     "CalculatorToolkit",
+    "Crawl4aiToolkit",
     "FileToolkit",
+    "NewspaperToolkit",
+    "Newspaper4kToolkit",
     "PythonToolkit",
     "ShellToolkit",
+    "WebsiteToolkit",
+    "WikipediaToolkit",
     "register_local_toolkits",
     "HTTPTransportServer",
     "run_stdio_transport",
