@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import mimetypes
+from pathlib import Path
 from typing import Any
 
 from ..agent import AgentAction, ProviderAdapter
 from ..config import require_env
+from ..media import Audio, File, Image, Video
 from ..protocol import ExecutionPlan, ToolCall, ToolResult, ToolSpec
-from .common import calls_to_dependency_batches, extract_refs, extract_usage_metrics, normalize_refs
+from .common import calls_to_dependency_batches, extract_refs, extract_usage_metrics, normalize_refs, safe_load_arguments
 
 
 class GeminiToolCallingProvider(ProviderAdapter):
@@ -39,18 +43,208 @@ class GeminiToolCallingProvider(ProviderAdapter):
         key = api_key or require_env("GEMINI_API_KEY")
         return genai.Client(api_key=key)
 
-    def _to_gemini_prompt(self, messages: list[dict[str, Any]]) -> str:
-        lines: list[str] = []
-        for msg in messages:
-            role = msg.get("role", "user")
-            content = msg.get("content", "")
-            if not isinstance(content, str):
-                content = str(content)
-            if role == "tool":
-                lines.append(f"tool_result ({msg.get('tool_name','tool')}): {content}")
+    def _to_text(self, content: Any) -> str:
+        if isinstance(content, str):
+            return content
+        try:
+            return json.dumps(content, default=str)
+        except Exception:
+            return str(content)
+
+    def _guess_mime(self, name_or_path: str, default: str) -> str:
+        guessed = mimetypes.guess_type(name_or_path)[0]
+        return guessed or default
+
+    def _image_part(self, image: Image, *, Part: Any) -> Any | None:
+        if image.url:
+            mime = image.mime_type or "image/jpeg"
+            return Part.from_uri(file_uri=image.url, mime_type=mime)
+        raw = image.get_content_bytes()
+        if raw is None:
+            return None
+        mime = image.mime_type
+        if mime is None:
+            if image.format:
+                mime = f"image/{image.format}"
+            elif image.filepath:
+                mime = self._guess_mime(str(image.filepath), "image/jpeg")
             else:
-                lines.append(f"{role}: {content}")
-        return "\n".join(lines).strip()
+                mime = "image/jpeg"
+        return Part.from_bytes(mime_type=mime, data=raw)
+
+    def _audio_part(self, audio: Audio, *, Part: Any) -> Any | None:
+        if audio.url:
+            mime = audio.mime_type
+            if mime is None:
+                if audio.format:
+                    mime = f"audio/{audio.format}"
+                else:
+                    mime = "audio/mpeg"
+            return Part.from_uri(file_uri=audio.url, mime_type=mime)
+        raw = audio.get_content_bytes()
+        if raw is None:
+            return None
+        mime = audio.mime_type
+        if mime is None:
+            if audio.format:
+                mime = f"audio/{audio.format}"
+            elif audio.filepath:
+                mime = self._guess_mime(str(audio.filepath), "audio/mpeg")
+            else:
+                mime = "audio/mpeg"
+        return Part.from_bytes(mime_type=mime, data=raw)
+
+    def _video_part(self, video: Video, *, Part: Any) -> Any | None:
+        if video.url:
+            mime = video.mime_type
+            if mime is None:
+                if video.format:
+                    mime = f"video/{video.format}"
+                else:
+                    mime = "video/mp4"
+            return Part.from_uri(file_uri=video.url, mime_type=mime)
+        raw = video.get_content_bytes()
+        if raw is None:
+            return None
+        mime = video.mime_type
+        if mime is None:
+            if video.format:
+                mime = f"video/{video.format}"
+            elif video.filepath:
+                mime = self._guess_mime(str(video.filepath), "video/mp4")
+            else:
+                mime = "video/mp4"
+        return Part.from_bytes(mime_type=mime, data=raw)
+
+    def _file_part(self, file: File, *, Part: Any) -> Any | None:
+        if file.url:
+            mime = file.mime_type or self._guess_mime(file.url, "application/octet-stream")
+            return Part.from_uri(file_uri=file.url, mime_type=mime)
+        raw = file.get_content_bytes()
+        if raw is None:
+            return None
+        file_name = file.filename
+        if file_name is None and file.filepath is not None:
+            file_name = Path(str(file.filepath)).name
+        mime = file.mime_type or (self._guess_mime(file_name, "application/octet-stream") if file_name else "application/octet-stream")
+        return Part.from_bytes(mime_type=mime, data=raw)
+
+    def _to_gemini_payload(self, messages: list[dict[str, Any]]) -> tuple[list[Any], str | None]:
+        from google.genai.types import Content, Part
+
+        contents: list[Any] = []
+        system_lines: list[str] = []
+        for msg in messages:
+            role = msg.get("role")
+            if role == "system":
+                text = self._to_text(msg.get("content", ""))
+                if text.strip():
+                    system_lines.append(text)
+                continue
+
+            parts: list[Any] = []
+            text = self._to_text(msg.get("content", ""))
+            if text.strip():
+                parts.append(Part.from_text(text=text))
+
+            if role == "user":
+                images = msg.get("images")
+                if isinstance(images, list):
+                    for image in images:
+                        if isinstance(image, Image):
+                            image_part = self._image_part(image, Part=Part)
+                            if image_part is not None:
+                                parts.append(image_part)
+                audios = msg.get("audios")
+                if audios is None:
+                    audios = msg.get("audio")
+                if isinstance(audios, list):
+                    for audio in audios:
+                        if isinstance(audio, Audio):
+                            audio_part = self._audio_part(audio, Part=Part)
+                            if audio_part is not None:
+                                parts.append(audio_part)
+                videos = msg.get("videos")
+                if isinstance(videos, list):
+                    for video in videos:
+                        if isinstance(video, Video):
+                            video_part = self._video_part(video, Part=Part)
+                            if video_part is not None:
+                                parts.append(video_part)
+                files = msg.get("files")
+                if isinstance(files, list):
+                    for file in files:
+                        if isinstance(file, File):
+                            file_part = self._file_part(file, Part=Part)
+                            if file_part is not None:
+                                parts.append(file_part)
+                if parts:
+                    contents.append(Content(role="user", parts=parts))
+                continue
+
+            if role == "assistant":
+                tool_calls = msg.get("tool_calls")
+                if isinstance(tool_calls, list):
+                    for tool_call in tool_calls:
+                        if not isinstance(tool_call, dict):
+                            continue
+                        function = tool_call.get("function")
+                        if not isinstance(function, dict):
+                            continue
+                        name = function.get("name")
+                        if not isinstance(name, str) or not name:
+                            continue
+                        raw_arguments = function.get("arguments")
+                        if isinstance(raw_arguments, str):
+                            args = safe_load_arguments(raw_arguments)
+                        elif isinstance(raw_arguments, dict):
+                            args = raw_arguments
+                        else:
+                            args = {}
+                        parts.append(Part.from_function_call(name=name, args=args))
+                if parts:
+                    contents.append(Content(role="model", parts=parts))
+                continue
+
+            if role == "tool":
+                tool_name = msg.get("tool_name")
+                if not isinstance(tool_name, str) or not tool_name:
+                    tool_name = "tool"
+                tool_content = msg.get("content")
+                if isinstance(tool_content, (dict, list, str, int, float, bool)) or tool_content is None:
+                    result_payload = tool_content
+                else:
+                    result_payload = self._to_text(tool_content)
+                parts.append(Part.from_function_response(name=tool_name, response={"result": result_payload}))
+                contents.append(Content(role="user", parts=parts))
+                continue
+
+            if parts:
+                contents.append(Content(role="user", parts=parts))
+
+        merged: list[Any] = []
+        for content in contents:
+            if merged and merged[-1].role == content.role:
+                merged[-1].parts.extend(content.parts)
+            else:
+                merged.append(content)
+        system_instruction = "\n\n".join(system_lines).strip() or None
+        return merged, system_instruction
+
+    def _extract_response_text(self, response: Any) -> str:
+        direct_text = getattr(response, "text", None)
+        if isinstance(direct_text, str) and direct_text.strip():
+            return direct_text.strip()
+        texts: list[str] = []
+        candidates = getattr(response, "candidates", None) or []
+        for candidate in candidates:
+            content = getattr(candidate, "content", None)
+            parts = getattr(content, "parts", None) or []
+            for part in parts:
+                part_text = getattr(part, "text", None)
+                if isinstance(part_text, str) and part_text:
+                    texts.append(part_text)
+        return "\n".join(texts).strip()
 
     def _is_ref_schema(self, schema: dict[str, Any]) -> bool:
         props = schema.get("properties")
@@ -101,7 +295,7 @@ class GeminiToolCallingProvider(ProviderAdapter):
         return sanitized
 
     def next_action(self, messages: list[dict[str, Any]], tools: list[ToolSpec]) -> AgentAction:
-        prompt = self._to_gemini_prompt(messages)
+        contents, system_instruction = self._to_gemini_payload(messages)
 
         genai_tools: list[dict[str, Any]] = []
         if tools:
@@ -117,12 +311,14 @@ class GeminiToolCallingProvider(ProviderAdapter):
             genai_tools = [{"function_declarations": functions}]
 
         config: dict[str, Any] = {"temperature": self.temperature}
+        if system_instruction:
+            config["system_instruction"] = system_instruction
         if genai_tools:
             config["tools"] = genai_tools
 
         response = self._client.models.generate_content(
             model=self.model_name,
-            contents=prompt,
+            contents=contents,
             config=config,
         )
         usage = extract_usage_metrics(response)
@@ -133,12 +329,15 @@ class GeminiToolCallingProvider(ProviderAdapter):
         calls: list[ToolCall] = []
         serialized_tool_calls: list[dict[str, Any]] = []
         id_by_index: dict[int, str] = {}
-        if response.candidates[0].content.parts:
-            for idx, part in enumerate(response.candidates[0].content.parts):
-                if fn := part.function_call:
+        candidates = getattr(response, "candidates", None) or []
+        if candidates:
+            parts = getattr(candidates[0].content, "parts", None) or []
+            for idx, part in enumerate(parts):
+                fn = getattr(part, "function_call", None)
+                if fn:
                     call_id = f"gemini_call_{idx}"
                     id_by_index[idx] = call_id
-                    raw_args = dict(fn.args)
+                    raw_args = fn.args if isinstance(fn.args, dict) else dict(fn.args)
                     normalized_args = normalize_refs(raw_args, id_by_index)
                     depends_on = list(dict.fromkeys(extract_refs(normalized_args)))
                     calls.append(
@@ -153,10 +352,11 @@ class GeminiToolCallingProvider(ProviderAdapter):
                         {
                             "id": call_id,
                             "type": "function",
-                            "function": {"name": fn.name, "arguments": str(raw_args)},
+                            "function": {"name": fn.name, "arguments": json.dumps(raw_args, default=str)},
                         }
                     )
 
+        response_text = self._extract_response_text(response)
         if calls:
             plan = ExecutionPlan(
                 batches=calls_to_dependency_batches(calls),
@@ -168,23 +368,27 @@ class GeminiToolCallingProvider(ProviderAdapter):
                     **action_meta,
                     "assistant_tool_message": {
                         "role": "assistant",
-                        "content": getattr(response, "text", "") or "",
+                        "content": response_text,
                         "tool_calls": serialized_tool_calls,
                     },
                 },
             )
 
-        return AgentAction(response_text=getattr(response, "text", "") or "", metadata=action_meta)
+        return AgentAction(response_text=response_text, metadata=action_meta)
 
     def finalize(self, messages: list[dict[str, Any]], tool_results: list[ToolResult]) -> str:
-        prompt = self._to_gemini_prompt(messages)
+        contents, system_instruction = self._to_gemini_payload(messages)
+        config: dict[str, Any] = {"temperature": self.temperature}
+        if system_instruction:
+            config["system_instruction"] = system_instruction
         response = self._client.models.generate_content(
             model=self.model_name,
-            contents=prompt,
-            config={"temperature": self.temperature},
+            contents=contents,
+            config=config,
         )
         self._last_finalize_usage = extract_usage_metrics(response) or None
-        return getattr(response, "text", "") or "Done."
+        text = self._extract_response_text(response)
+        return text or "Done."
 
     async def anext_action(self, messages: list[dict[str, Any]], tools: list[ToolSpec]) -> AgentAction:
         return await asyncio.to_thread(self.next_action, messages, tools)
