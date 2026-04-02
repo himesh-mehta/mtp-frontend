@@ -11,7 +11,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "src"))
 from mtp import Agent, MTPAgent, ToolRegistry
 from mtp.agent import AgentAction, ProviderAdapter
 from mtp.providers import MockPlannerProvider
-from mtp.protocol import ToolResult
+from mtp.protocol import ExecutionPlan, ToolBatch, ToolCall, ToolResult
 from mtp.runtime import RegisteredTool, ToolkitLoader
 from mtp.protocol import ToolRiskLevel, ToolSpec
 
@@ -53,6 +53,50 @@ class _DirectResponseProvider(ProviderAdapter):
 
     def finalize(self, messages: list[dict], tool_results: list[ToolResult]) -> str:
         return self.text
+
+
+class _PlanThenRespondProvider(ProviderAdapter):
+    def __init__(self) -> None:
+        self._step = 0
+
+    def next_action(self, messages: list[dict], tools: list[ToolSpec]) -> AgentAction:
+        if self._step == 0:
+            self._step += 1
+            return AgentAction(
+                plan=ExecutionPlan(
+                    batches=[
+                        ToolBatch(
+                            mode="parallel",
+                            calls=[ToolCall(id="call-1", name="echo.tool", arguments={"text": "hello"})],
+                        )
+                    ]
+                ),
+                metadata={
+                    "assistant_tool_message": {
+                        "role": "assistant",
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "call-1",
+                                "type": "function",
+                                "function": {"name": "echo.tool", "arguments": "{\"text\":\"hello\"}"},
+                            }
+                        ],
+                    }
+                },
+            )
+        return AgentAction(response_text="done")
+
+    def finalize(self, messages: list[dict], tool_results: list[ToolResult]) -> str:
+        return "done"
+
+
+class _FailingProvider(ProviderAdapter):
+    def next_action(self, messages: list[dict], tools: list[ToolSpec]) -> AgentAction:
+        raise RuntimeError("boom")
+
+    def finalize(self, messages: list[dict], tool_results: list[ToolResult]) -> str:
+        return "never"
 
 
 class AgentTests(unittest.TestCase):
@@ -113,7 +157,9 @@ class AgentTests(unittest.TestCase):
         self.assertEqual(member_agents[0]["id"], "calculator")
         self.assertEqual(member_agents[0]["mode"], "member")
         self.assertIn("calc.add", member_agents[0]["tools"])
-        self.assertNotIn("system_instructions", member_agents[0])
+        self.assertIn("system_instructions", member_agents[0])
+        self.assertIn("user_instructions", member_agents[0])
+        self.assertIn("orchestration_instructions", member_agents[0])
 
     def test_print_response_stream_events_pretty_format(self) -> None:
         member_registry = ToolRegistry()
@@ -125,6 +171,7 @@ class AgentTests(unittest.TestCase):
             tools=reg,
             mode="orchestration",
             members={"calculator": member},
+            debug_mode=True,
         )
         buffer = io.StringIO()
         with contextlib.redirect_stdout(buffer):
@@ -140,6 +187,49 @@ class AgentTests(unittest.TestCase):
         self.assertIn("Orchestration Instructions:", printed)
         self.assertIn("User Message:", printed)
         self.assertIn("[MTP RUN END]", printed)
+
+    def test_print_response_stream_events_normal_mode_hides_debug_events(self) -> None:
+        reg = ToolRegistry()
+        reg.register_tool(ToolSpec(name="echo.tool", description=""), lambda text: f"echo:{text}")
+        agent = MTPAgent(provider=_PlanThenRespondProvider(), tools=reg, debug_mode=False)
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer):
+            agent.print_response("hello", max_rounds=2, stream=True, stream_events=True)
+        printed = buffer.getvalue()
+        self.assertIn("Mode            : normal", printed)
+        self.assertNotIn("[MTP PLAN]", printed)
+        self.assertNotIn("[MTP TOOL START]", printed)
+        self.assertNotIn("[MTP TOOL END]", printed)
+        self.assertIn("[MTP RUN END]", printed)
+
+    def test_print_response_stream_events_debug_mode_shows_detailed_events(self) -> None:
+        reg = ToolRegistry()
+        reg.register_tool(ToolSpec(name="echo.tool", description=""), lambda text: f"echo:{text}")
+        agent = MTPAgent(provider=_PlanThenRespondProvider(), tools=reg, debug_mode=True)
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer):
+            agent.print_response("hello", max_rounds=2, stream=True, stream_events=True)
+        printed = buffer.getvalue()
+        self.assertIn("[MTP PLAN]", printed)
+        self.assertIn("[MTP TOOL START]", printed)
+        self.assertIn("[MTP TOOL END]", printed)
+        self.assertIn("METRICS", printed)
+        self.assertIn("<tools>", printed)
+        self.assertIn("<system_instructions>", printed)
+        self.assertNotIn("<llm_response>", printed)
+        self.assertNotIn("<instruction>", printed)
+
+    def test_run_events_emit_run_failed_and_pretty_prints_error(self) -> None:
+        reg = ToolRegistry()
+        agent = MTPAgent(provider=_FailingProvider(), tools=reg, debug_mode=False)
+        buffer = io.StringIO()
+        with self.assertRaises(RuntimeError):
+            with contextlib.redirect_stdout(buffer):
+                agent.print_response("hello", max_rounds=1, stream=True, stream_events=True)
+        printed = buffer.getvalue()
+        self.assertIn("[MTP RUN FAILED]", printed)
+        self.assertIn("Error:", printed)
+        self.assertIn("boom", printed)
 
 
 if __name__ == "__main__":
