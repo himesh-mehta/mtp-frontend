@@ -4,6 +4,7 @@ import asyncio
 from datetime import UTC, datetime
 import json
 import re
+from time import perf_counter
 from dataclasses import dataclass, field
 from collections.abc import AsyncIterator, Iterator
 from typing import Any, Callable, Protocol
@@ -220,7 +221,7 @@ class Agent:
     def _debug(self, text: str) -> None:
         if self.debug_mode:
             stamp = datetime.now(UTC).strftime("%H:%M:%S.%f")[:-3]
-            self.debug_logger(f"[MTP DEBUG {stamp}] {text}")
+            self.debug_logger(f"DEBUG | [MTP] t={stamp} {text}")
 
     def cancel_run(self, run_id: str) -> bool:
         if run_id not in self._active_runs:
@@ -450,17 +451,32 @@ class Agent:
             self._debug(f"mode_instructions={self._short(mode_instruction)}")
         self._system_seeded = True
 
-    def _member_agents_snapshot(self) -> list[dict[str, Any]]:
+    def _member_agents_snapshot(self, *, _visited: set[int] | None = None) -> list[dict[str, Any]]:
+        visited = set(_visited or set())
+        visited.add(id(self))
         members: list[dict[str, Any]] = []
         for member_name, member in self.members.items():
-            member_tools = [tool.name for tool in member.registry.list_tools()]
+            member_tools = member.registry.list_tools()
+            direct_tool_names = [tool.name for tool in member_tools if not tool.name.startswith("agent.member.")]
+            delegation_tool_names = [tool.name for tool in member_tools if tool.name.startswith("agent.member.")]
+            mode_instruction = member._build_mode_system_instruction()
+            nested_members: list[dict[str, Any]] = []
+            if id(member) not in visited:
+                nested_members = member._member_agents_snapshot(_visited=visited | {id(member)})
             members.append(
                 {
                     "id": member_name,
                     "mode": member.mode,
                     "delegation_tool": self._member_tool_name(member_name),
                     "role": member.instructions,
-                    "tools": member_tools,
+                    "tools": [tool.name for tool in member_tools],
+                    "tools_available": len(member_tools),
+                    "direct_tool_names": direct_tool_names,
+                    "delegation_tool_names": delegation_tool_names,
+                    "system_instructions": [member.system_instructions] if member.system_instructions else [],
+                    "user_instructions": [member.instructions] if member.instructions else [],
+                    "orchestration_instructions": [mode_instruction] if mode_instruction else [],
+                    "member_agents": nested_members,
                 }
             )
         return members
@@ -1183,14 +1199,29 @@ class Agent:
 
         last_results: list[ToolResult] = []
         total_tool_calls = 0
+        current_round = 0
         try:
             for round_idx in range(1, max_rounds + 1):
+                current_round = round_idx
                 if self._is_cancelled(resolved_run_id):
                     yield events.emit("run_cancelled", round=round_idx)
                     self._append_message({"role": "assistant", "content": "Run cancelled."})
                     return
                 yield events.emit("round_started", round=round_idx)
+                llm_started = perf_counter()
                 action = self.provider.next_action(self.messages, tools)
+                llm_duration = perf_counter() - llm_started
+                action_metadata = action.metadata if isinstance(action.metadata, dict) else {}
+                yield events.emit(
+                    "llm_response",
+                    round=round_idx,
+                    provider=action_metadata.get("provider"),
+                    model=action_metadata.get("model"),
+                    usage=action_metadata.get("usage"),
+                    duration_seconds=llm_duration,
+                    has_plan=action.plan is not None,
+                    has_response=bool(action.response_text),
+                )
 
                 if action.response_text and action.plan is None:
                     self._append_message({"role": "assistant", "content": action.response_text})
@@ -1344,6 +1375,7 @@ class Agent:
             finalize_stream = getattr(self.provider, "finalize_stream", None)
             if stream_final and callable(finalize_stream):
                 chunks: list[str] = []
+                finalize_started = perf_counter()
                 for chunk in finalize_stream(self.messages, last_results):
                     if self._is_cancelled(resolved_run_id):
                         yield events.emit("run_cancelled", round=max_rounds)
@@ -1353,14 +1385,40 @@ class Agent:
                         chunks.append(chunk)
                         yield events.emit("text_chunk", chunk=chunk, source="finalize_stream")
                 final_text = "".join(chunks)
+                finalize_duration = perf_counter() - finalize_started
             else:
+                finalize_started = perf_counter()
                 final_text = self.provider.finalize(self.messages, last_results)
+                finalize_duration = perf_counter() - finalize_started
                 if stream_final:
                     for chunk in self._chunk_text(final_text):
                         yield events.emit("text_chunk", chunk=chunk, source="finalize_fallback")
 
+            finalize_usage = getattr(self.provider, "_last_stream_usage", None)
+            if not isinstance(finalize_usage, dict):
+                finalize_usage = getattr(self.provider, "_last_finalize_usage", None)
+            model_name = getattr(self.provider, "model", None) or getattr(self.provider, "model_name", None)
+            yield events.emit(
+                "llm_response",
+                round=max_rounds,
+                stage="finalize",
+                provider=type(self.provider).__name__,
+                model=model_name,
+                usage=finalize_usage if isinstance(finalize_usage, dict) else None,
+                duration_seconds=finalize_duration,
+                has_plan=False,
+                has_response=True,
+            )
             self._append_message({"role": "assistant", "content": final_text})
             yield events.emit("run_completed", final_text=final_text, rounds=max_rounds, total_tool_calls=total_tool_calls)
+        except Exception as exc:  # noqa: BLE001
+            yield events.emit(
+                "run_failed",
+                round=current_round or None,
+                error_type=type(exc).__name__,
+                error=str(exc),
+            )
+            raise
         finally:
             self._complete_run(resolved_run_id)
 
@@ -1416,14 +1474,29 @@ class Agent:
 
         last_results: list[ToolResult] = []
         total_tool_calls = 0
+        current_round = 0
         try:
             for round_idx in range(1, max_rounds + 1):
+                current_round = round_idx
                 if self._is_cancelled(resolved_run_id):
                     yield events.emit("run_cancelled", round=round_idx)
                     self._append_message({"role": "assistant", "content": "Run cancelled."})
                     return
                 yield events.emit("round_started", round=round_idx)
+                llm_started = perf_counter()
                 action = await self._anext_action(tools)
+                llm_duration = perf_counter() - llm_started
+                action_metadata = action.metadata if isinstance(action.metadata, dict) else {}
+                yield events.emit(
+                    "llm_response",
+                    round=round_idx,
+                    provider=action_metadata.get("provider"),
+                    model=action_metadata.get("model"),
+                    usage=action_metadata.get("usage"),
+                    duration_seconds=llm_duration,
+                    has_plan=action.plan is not None,
+                    has_response=bool(action.response_text),
+                )
 
                 if action.response_text and action.plan is None:
                     self._append_message({"role": "assistant", "content": action.response_text})
@@ -1575,6 +1648,7 @@ class Agent:
             finalize_stream = getattr(self.provider, "finalize_stream", None)
             if stream_final and callable(finalize_stream):
                 chunks: list[str] = []
+                finalize_started = perf_counter()
                 for chunk in finalize_stream(self.messages, last_results):
                     if self._is_cancelled(resolved_run_id):
                         yield events.emit("run_cancelled", round=max_rounds)
@@ -1585,12 +1659,39 @@ class Agent:
                         yield events.emit("text_chunk", chunk=chunk, source="finalize_stream")
                 final_text = "".join(chunks)
             else:
+                finalize_started = perf_counter()
                 final_text = await self._afinalize(last_results)
+                finalize_duration = perf_counter() - finalize_started
                 if stream_final:
                     for chunk in self._chunk_text(final_text):
                         yield events.emit("text_chunk", chunk=chunk, source="finalize_fallback")
+            if stream_final and callable(finalize_stream):
+                finalize_duration = perf_counter() - finalize_started
 
+            finalize_usage = getattr(self.provider, "_last_stream_usage", None)
+            if not isinstance(finalize_usage, dict):
+                finalize_usage = getattr(self.provider, "_last_finalize_usage", None)
+            model_name = getattr(self.provider, "model", None) or getattr(self.provider, "model_name", None)
+            yield events.emit(
+                "llm_response",
+                round=max_rounds,
+                stage="finalize",
+                provider=type(self.provider).__name__,
+                model=model_name,
+                usage=finalize_usage if isinstance(finalize_usage, dict) else None,
+                duration_seconds=finalize_duration,
+                has_plan=False,
+                has_response=True,
+            )
             self._append_message({"role": "assistant", "content": final_text})
             yield events.emit("run_completed", final_text=final_text, rounds=max_rounds, total_tool_calls=total_tool_calls)
+        except Exception as exc:  # noqa: BLE001
+            yield events.emit(
+                "run_failed",
+                round=current_round or None,
+                error_type=type(exc).__name__,
+                error=str(exc),
+            )
+            raise
         finally:
             self._complete_run(resolved_run_id)
