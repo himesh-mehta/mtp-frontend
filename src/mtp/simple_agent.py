@@ -251,7 +251,22 @@ class MTPAgent:
                 "tools_ok": 0,
                 "tools_failed": 0,
                 "tools_cached": 0,
+                "debug_enabled": bool(self._agent.debug_mode),
+                "metrics": {
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "total_tokens": 0,
+                    "reasoning_tokens": 0,
+                    "cached_input_tokens": 0,
+                    "cache_write_tokens": 0,
+                    "cache_creation_input_tokens": 0,
+                    "cache_read_input_tokens": 0,
+                    "tool_use_prompt_tokens": 0,
+                    "llm_duration_seconds": 0.0,
+                    "llm_calls": 0,
+                },
             }
+            debug_enabled = bool(self._agent.debug_mode)
             for event in self.run_events(
                 prompt,
                 max_rounds=max_rounds,
@@ -260,6 +275,8 @@ class MTPAgent:
                 tool_call_limit=tool_call_limit,
             ):
                 if event_format == "json":
+                    if not self._should_print_event(event.get("type"), debug_enabled=debug_enabled):
+                        continue
                     print(json.dumps(event, default=str))
                     continue
                 printed_chunk = self._print_pretty_event(event, printed_chunk=printed_chunk, context=pretty_context)
@@ -315,6 +332,9 @@ class MTPAgent:
     def _hr(self, char: str = "-", width: int = 88) -> str:
         return char * width
 
+    def _log_line(self, level: str, text: str) -> None:
+        print(f"{level} | {text}")
+
     def _print_wrapped_block(self, title: str, text: Any, *, indent: str = "  ", width: int = 100) -> None:
         print(f"{title}:")
         raw = str(text or "")
@@ -346,6 +366,139 @@ class MTPAgent:
                 print(f"{indent}{prefix}{chunk}")
                 first = False
 
+    def _as_int(self, value: Any) -> int:
+        try:
+            return int(value)
+        except Exception:
+            return 0
+
+    def _as_float(self, value: Any) -> float:
+        try:
+            return float(value)
+        except Exception:
+            return 0.0
+
+    def _merge_usage_metrics(self, context: dict[str, Any], usage: Any, duration_seconds: Any) -> None:
+        metrics = context.setdefault(
+            "metrics",
+            {
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "total_tokens": 0,
+                "reasoning_tokens": 0,
+                "cached_input_tokens": 0,
+                "cache_write_tokens": 0,
+                "cache_creation_input_tokens": 0,
+                "cache_read_input_tokens": 0,
+                "tool_use_prompt_tokens": 0,
+                "llm_duration_seconds": 0.0,
+                "llm_calls": 0,
+            },
+        )
+        usage_dict = usage if isinstance(usage, dict) else {}
+        metrics["input_tokens"] = self._as_int(metrics.get("input_tokens")) + self._as_int(usage_dict.get("input_tokens"))
+        metrics["output_tokens"] = self._as_int(metrics.get("output_tokens")) + self._as_int(usage_dict.get("output_tokens"))
+        metrics["total_tokens"] = self._as_int(metrics.get("total_tokens")) + self._as_int(usage_dict.get("total_tokens"))
+        metrics["reasoning_tokens"] = self._as_int(metrics.get("reasoning_tokens")) + self._as_int(
+            usage_dict.get("reasoning_tokens")
+        )
+        metrics["cached_input_tokens"] = self._as_int(metrics.get("cached_input_tokens")) + self._as_int(
+            usage_dict.get("cached_input_tokens")
+        )
+        metrics["cache_write_tokens"] = self._as_int(metrics.get("cache_write_tokens")) + self._as_int(
+            usage_dict.get("cache_write_tokens")
+        )
+        metrics["cache_creation_input_tokens"] = self._as_int(
+            metrics.get("cache_creation_input_tokens")
+        ) + self._as_int(usage_dict.get("cache_creation_input_tokens"))
+        metrics["cache_read_input_tokens"] = self._as_int(metrics.get("cache_read_input_tokens")) + self._as_int(
+            usage_dict.get("cache_read_input_tokens")
+        )
+        metrics["tool_use_prompt_tokens"] = self._as_int(metrics.get("tool_use_prompt_tokens")) + self._as_int(
+            usage_dict.get("tool_use_prompt_tokens")
+        )
+        metrics["llm_duration_seconds"] = self._as_float(metrics.get("llm_duration_seconds")) + self._as_float(duration_seconds)
+        metrics["llm_calls"] = self._as_int(metrics.get("llm_calls")) + 1
+
+    def _print_metrics_block(
+        self,
+        context: dict[str, Any],
+        *,
+        duration_seconds: float | None = None,
+        title: str = "METRICS",
+        level: str = "DEBUG",
+    ) -> None:
+        metrics = context.get("metrics", {})
+        input_tokens = self._as_int(metrics.get("input_tokens"))
+        output_tokens = self._as_int(metrics.get("output_tokens"))
+        total_tokens = self._as_int(metrics.get("total_tokens"))
+        reasoning_tokens = self._as_int(metrics.get("reasoning_tokens"))
+        cached_input_tokens = self._as_int(metrics.get("cached_input_tokens"))
+        cache_write_tokens = self._as_int(metrics.get("cache_write_tokens"))
+        cache_creation_input_tokens = self._as_int(metrics.get("cache_creation_input_tokens"))
+        cache_read_input_tokens = self._as_int(metrics.get("cache_read_input_tokens"))
+        tool_use_prompt_tokens = self._as_int(metrics.get("tool_use_prompt_tokens"))
+        llm_calls = self._as_int(metrics.get("llm_calls"))
+        measured_duration = self._as_float(metrics.get("llm_duration_seconds"))
+        effective_duration = duration_seconds if duration_seconds is not None and duration_seconds > 0 else measured_duration
+        tokens_per_second = (total_tokens / effective_duration) if effective_duration > 1e-6 else None
+
+        self._log_line(level, f"{'*' * 24}  {title}  {'*' * 25}")
+        self._log_line(
+            level,
+            f"* Tokens: input={input_tokens}, output={output_tokens}, "
+            f"total={total_tokens}, reasoning={reasoning_tokens}"
+        )
+        if any(
+            [
+                cached_input_tokens,
+                cache_write_tokens,
+                cache_creation_input_tokens,
+                cache_read_input_tokens,
+                tool_use_prompt_tokens,
+            ]
+        ):
+            self._log_line(
+                level,
+                "* Cache/Tool Tokens: "
+                f"cached_input={cached_input_tokens}, cache_write={cache_write_tokens}, "
+                f"cache_create_input={cache_creation_input_tokens}, "
+                f"cache_read_input={cache_read_input_tokens}, tool_use_prompt={tool_use_prompt_tokens}"
+            )
+        self._log_line(level, f"* LLM Calls: {llm_calls}")
+        self._log_line(level, f"* Duration: {effective_duration:.4f}s")
+        if tokens_per_second is None:
+            self._log_line(level, "* Tokens per second: n/a")
+        else:
+            self._log_line(level, f"* Tokens per second: {tokens_per_second:.4f} tokens/s")
+        self._log_line(level, f"{'*' * 24}  {title}  {'*' * 25}")
+
+    def _print_xml_section(self, tag: str, items: list[Any], *, width: int = 100) -> None:
+        print(f"<{tag}>")
+        if not items:
+            print("  (none)")
+        else:
+            for item in items:
+                self._print_bullet(item, indent="  ", width=width)
+        print(f"</{tag}>")
+
+    def _should_print_event(self, event_type: Any, *, debug_enabled: bool) -> bool:
+        event_name = str(event_type or "")
+        if debug_enabled:
+            return True
+        normal_events = {
+            "run_started",
+            "round_started",
+            "text_chunk",
+            "run_completed",
+            "run_cancelled",
+            "run_paused",
+            "run_failed",
+            "tool_retry_requested",
+            "strict_violations",
+        }
+        return event_name in normal_events
+
     def _print_pretty_event(
         self,
         event: dict[str, Any],
@@ -357,15 +510,24 @@ class MTPAgent:
         stamp = str(event.get("timestamp", ""))
         sequence = event.get("sequence")
         meta = self._format_meta(event_type=event_type, sequence=sequence, stamp=stamp)
+        debug_enabled = bool(context.get("debug_enabled", False))
 
         if event_type == "run_started":
             context["run_started_at"] = stamp
             print(f"\n{self._hr('=')}")
-            print(f"[MTP RUN START] {meta}")
+            self._log_line("INFO", f"[MTP RUN START] {meta}")
             print(self._hr("="))
             print(f"Run ID          : {event.get('run_id')}")
             print(f"Max Rounds      : {event.get('max_rounds')}")
             print(f"Tools Available : {event.get('tools_available')}")
+            print(f"User ID         : {event.get('user_id') or '-'}")
+            print(f"Session ID      : {event.get('session_id') or '-'}")
+            metadata = event.get("metadata") if isinstance(event.get("metadata"), dict) else {}
+            self._print_json_block("Metadata", metadata, indent="  ", max_chars=600)
+            if not debug_enabled:
+                self._print_wrapped_block("User Message", event.get("user_message"), indent="  ", width=100)
+                print("Mode            : normal (set debug_mode=True for detailed tool logs)")
+                return False
             direct_tools = [str(tool) for tool in list(event.get("direct_tool_names", []))]
             if not direct_tools:
                 all_tools = [str(tool) for tool in list(event.get("tool_names", []))]
@@ -401,6 +563,21 @@ class MTPAgent:
             system_instructions = list(event.get("system_instructions", []))
             user_instructions = list(event.get("user_instructions", []))
             orchestration_instructions = list(event.get("orchestration_instructions", []))
+            self._print_xml_section("tools", direct_tools, width=100)
+            member_blocks: list[str] = []
+            for member in member_agents:
+                member_blocks.append(
+                    self._short(
+                        {
+                            "id": member.get("id"),
+                            "mode": member.get("mode"),
+                            "delegation_tool": member.get("delegation_tool"),
+                            "tools": member.get("tools", []),
+                        },
+                        width=1000,
+                    )
+                )
+            self._print_xml_section("team_members", member_blocks, width=100)
             print("System Instructions:")
             if system_instructions:
                 for item in system_instructions:
@@ -423,16 +600,42 @@ class MTPAgent:
             if input_validation_error:
                 self._print_wrapped_block("Input Validation Error", input_validation_error, indent="  ", width=100)
             self._print_wrapped_block("User Message", event.get("user_message"), indent="  ", width=100)
+            self._print_xml_section("system_instructions", system_instructions, width=100)
+            self._print_xml_section("user_instructions", user_instructions, width=100)
+            self._print_xml_section("orchestration_instructions", orchestration_instructions, width=100)
             return False
 
         if event_type == "round_started":
             round_idx = event.get("round")
             print(f"\n{self._hr('-')}")
-            print(f"[MTP ROUND START] round={round_idx}  {meta}")
+            self._log_line("INFO", f"[MTP ROUND START] round={round_idx}  {meta}")
             print(self._hr("-"))
             return False
 
+        if event_type == "llm_response":
+            self._merge_usage_metrics(context, event.get("usage"), event.get("duration_seconds"))
+            if not debug_enabled:
+                return False
+            self._log_line(
+                "DEBUG",
+                f"*** LLM RESPONSE round={event.get('round')} provider={event.get('provider')} "
+                f"model={event.get('model')} stage={event.get('stage') or 'next_action'} "
+                f"duration={self._as_float(event.get('duration_seconds')):.4f}s ***",
+            )
+            usage = event.get("usage")
+            print(f"  Provider       : {event.get('provider')}")
+            print(f"  Model          : {event.get('model')}")
+            print(f"  Stage          : {event.get('stage') or 'next_action'}")
+            print(f"  Duration       : {self._as_float(event.get('duration_seconds')):.4f}s")
+            print(f"  Has Plan       : {bool(event.get('has_plan'))}")
+            print(f"  Has Response   : {bool(event.get('has_response'))}")
+            self._print_json_block("  Usage", usage if usage is not None else {}, indent="    ", max_chars=500)
+            self._print_metrics_block(context, title="METRICS")
+            return False
+
         if event_type == "plan_received":
+            if not debug_enabled:
+                return False
             round_idx = event.get("round")
             batches = event.get("batches", [])
             total_calls = sum(len(list(batch.get("calls", []))) for batch in batches)
@@ -449,7 +652,15 @@ class MTPAgent:
         if event_type == "tool_started":
             call_id = str(event.get("call_id"))
             context.setdefault("tool_starts", {})[call_id] = stamp
-            print(f"[MTP TOOL START] round={event.get('round')} tool={event.get('tool_name')} id={event.get('call_id')}  {meta}")
+            if not debug_enabled:
+                return False
+            self._log_line(
+                "DEBUG",
+                f"[MTP TOOL START] round={event.get('round')} tool={event.get('tool_name')} id={event.get('call_id')}  {meta}",
+            )
+            depends_on = list(event.get("depends_on", []))
+            if depends_on:
+                print(f"  Depends On     : {depends_on}")
             self._print_json_block("  Arguments", event.get("arguments"), indent="    ", max_chars=600)
             tool_name = str(event.get("tool_name", ""))
             if tool_name.startswith("agent.member."):
@@ -467,6 +678,18 @@ class MTPAgent:
                         print(f"    - {tool}")
                 else:
                     print("    - (none)")
+                print("  <member_context>")
+                self._print_json_block(
+                    "    Summary",
+                    {
+                        "member_id": member_id,
+                        "member_tools": member.get("tools"),
+                        "task_input": event.get("arguments"),
+                    },
+                    indent="      ",
+                    max_chars=900,
+                )
+                print("  </member_context>")
             return False
 
         if event_type == "tool_finished":
@@ -482,9 +705,12 @@ class MTPAgent:
             duration_text = self._duration_seconds(context.get("tool_starts", {}).pop(call_id, None), stamp)
             duration_segment = f" duration={duration_text}" if duration_text else ""
             payload = event.get("output") if success else event.get("error")
-            print(
+            if not debug_enabled:
+                return False
+            self._log_line(
+                "DEBUG",
                 f"[MTP TOOL END] status={success_text} tool={event.get('tool_name')} "
-                f"id={event.get('call_id')} cached={event.get('cached')}{duration_segment}  {meta}"
+                f"id={event.get('call_id')} cached={event.get('cached')} approval={event.get('approval')}{duration_segment}  {meta}",
             )
             self._print_json_block("  Result", payload, indent="    ", max_chars=900)
             member_id = context.get("delegated_calls", {}).pop(call_id, None)
@@ -493,9 +719,19 @@ class MTPAgent:
                     f"  Delegation: completed member={member_id} parent_call_id={call_id} "
                     f"status={success_text}"
                 )
+                print("  <member_output>")
+                self._print_json_block(
+                    "    Summary",
+                    {"member_id": member_id, "status": success_text, "result": payload},
+                    indent="      ",
+                    max_chars=900,
+                )
+                print("  </member_output>")
             return False
 
         if event_type == "batch_started":
+            if not debug_enabled:
+                return False
             print(
                 f"[MTP BATCH] round={event.get('round')} idx={event.get('batch_index')} "
                 f"mode={event.get('mode')} call_ids={event.get('call_ids')}  {meta}"
@@ -503,6 +739,8 @@ class MTPAgent:
             return False
 
         if event_type == "assistant_tool_message":
+            if not debug_enabled:
+                return False
             message = event.get("message", {})
             tool_calls = message.get("tool_calls", []) if isinstance(message, dict) else []
             print(f"[MTP ASSISTANT TOOL MSG] round={event.get('round')} tool_calls={len(tool_calls)}  {meta}")
@@ -543,7 +781,7 @@ class MTPAgent:
             elapsed = self._duration_seconds(context.get("run_started_at"), stamp)
             elapsed_segment = f" elapsed={elapsed}" if elapsed else ""
             print(f"\n{self._hr('=')}")
-            print(f"[MTP RUN END] {meta}")
+            self._log_line("INFO", f"[MTP RUN END] {meta}")
             print(self._hr("="))
             print(f"Rounds          : {event.get('rounds')}")
             print(f"Total Tool Calls: {event.get('total_tool_calls')}")
@@ -552,6 +790,9 @@ class MTPAgent:
             print(f"Tools Cached    : {context.get('tools_cached', 0)}")
             if elapsed_segment:
                 print(f"Elapsed         : {elapsed_segment.removeprefix(' elapsed=')}")
+            elapsed_seconds = self._as_float(elapsed_segment.removeprefix(" elapsed=").removesuffix("s")) if elapsed_segment else None
+            metrics_level = "DEBUG" if debug_enabled else "INFO"
+            self._print_metrics_block(context, duration_seconds=elapsed_seconds, title="RUN METRICS", level=metrics_level)
             final_text = str(event.get("final_text", ""))
             self._print_wrapped_block("Final Text", final_text, indent="  ", width=100)
             return False
@@ -559,16 +800,24 @@ class MTPAgent:
         if event_type == "run_cancelled":
             elapsed = self._duration_seconds(context.get("run_started_at"), stamp)
             elapsed_segment = f" elapsed={elapsed}" if elapsed else ""
-            print(f"\n[MTP RUN CANCELLED] round={event.get('round')}{elapsed_segment}  {meta}")
+            self._log_line("INFO", f"[MTP RUN CANCELLED] round={event.get('round')}{elapsed_segment}  {meta}")
             return False
 
         if event_type == "run_paused":
-            print(f"\n[MTP RUN PAUSED] round={event.get('round')} tool_name={event.get('tool_name')}  {meta}")
+            self._log_line("INFO", f"[MTP RUN PAUSED] round={event.get('round')} tool_name={event.get('tool_name')}  {meta}")
             self._print_wrapped_block("Reason", event.get("reason"), indent="  ", width=100)
             return False
 
+        if event_type == "run_failed":
+            self._log_line(
+                "ERROR",
+                f"[MTP RUN FAILED] round={event.get('round')} error_type={event.get('error_type')}  {meta}",
+            )
+            self._print_wrapped_block("Error", event.get("error"), indent="  ", width=100)
+            return False
+
         if event_type == "tool_retry_requested":
-            print(f"[MTP TOOL RETRY] round={event.get('round')} tool_name={event.get('tool_name')}  {meta}")
+            self._log_line("INFO", f"[MTP TOOL RETRY] round={event.get('round')} tool_name={event.get('tool_name')}  {meta}")
             self._print_wrapped_block("Feedback", event.get("feedback"), indent="  ", width=100)
             return False
 
