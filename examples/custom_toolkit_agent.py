@@ -5,28 +5,28 @@ import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "src"))
 
-from mtp import MTPAgent, ToolRegistry, load_dotenv_if_available, mtp_tool, toolkit_from_functions
+from mtp import Agent
 from mtp.providers import Groq
 
 
-@mtp_tool(description="Add two integers and return the sum.")
+@Agent.mtp_tool(description="Add two integers and return the sum.")
 def add(a: int, b: int) -> int:
     return a + b
 
 
-@mtp_tool(description="Reverse a string.")
+@Agent.mtp_tool(description="Reverse a string.")
 def reverse_text(text: str) -> str:
     return text[::-1]
 
 
 def main() -> None:
-    load_dotenv_if_available()
+    Agent.load_dotenv_if_available()
     provider = Groq(model="moonshotai/kimi-k2-instruct")
 
-    tools = ToolRegistry()
-    tools.register_toolkit_loader("custom", toolkit_from_functions("custom", add, reverse_text))
+    tools = Agent.ToolRegistry()
+    tools.register_toolkit_loader("custom", Agent.toolkit_from_functions("custom", add, reverse_text))
 
-    agent = MTPAgent(
+    agent = Agent.MTPAgent(
         provider=provider,
         tools=tools,
         instructions="Use tools when useful and keep responses concise.",
@@ -36,3 +36,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
