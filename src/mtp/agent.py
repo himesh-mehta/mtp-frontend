@@ -13,6 +13,7 @@ from uuid import uuid4
 from .events import EventStreamContext
 from .media import Audio, File, Image, Video
 from .prompts import DEFAULT_MTP_SYSTEM_INSTRUCTIONS
+from .session_store import SessionRecord, SessionRun, SessionStore
 from .runtime import (
     ExecutionCancelledError,
     RegisteredTool,
@@ -102,6 +103,7 @@ class Agent:
         send_media_to_model: bool = True,
         mode: str = "standalone",
         members: dict[str, "Agent"] | None = None,
+        session_store: SessionStore | None = None,
     ) -> None:
         if registry is not None and tools is not None and registry is not tools:
             raise ValueError("Pass only one of `tools` or `registry`.")
@@ -123,6 +125,7 @@ class Agent:
         self.send_media_to_model = send_media_to_model
         self.mode = self._validate_mode(mode)
         self.members: dict[str, Agent] = {}
+        self.session_store = session_store
         self._system_seeded = False
         self.messages: list[dict[str, Any]] = []
         self._active_runs: set[str] = set()
@@ -480,6 +483,9 @@ class Agent:
         audios: list[Audio] | None = None,
         videos: list[Video] | None = None,
         files: list[File] | None = None,
+        user_id: str | None = None,
+        session_id: str | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> str:
         return self.run_loop(
             user_input=user_input,
@@ -488,6 +494,9 @@ class Agent:
             audios=audios,
             videos=videos,
             files=files,
+            user_id=user_id,
+            session_id=session_id,
+            metadata=metadata,
         )
 
     async def arun(
@@ -498,6 +507,9 @@ class Agent:
         audios: list[Audio] | None = None,
         videos: list[Video] | None = None,
         files: list[File] | None = None,
+        user_id: str | None = None,
+        session_id: str | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> str:
         return await self.arun_loop(
             user_input=user_input,
@@ -506,6 +518,9 @@ class Agent:
             audios=audios,
             videos=videos,
             files=files,
+            user_id=user_id,
+            session_id=session_id,
+            metadata=metadata,
         )
 
     def _run_coro_sync(self, coro: Any) -> Any:
@@ -588,6 +603,57 @@ class Agent:
                 }
             )
         return members
+
+    def _load_session_history(self, *, session_id: str, user_id: str | None = None) -> None:
+        if self.session_store is None:
+            return
+        stored = self.session_store.get_session(session_id=session_id, user_id=user_id)
+        if stored is None:
+            self.messages = []
+            self._system_seeded = False
+            return
+        self.messages = [dict(message) for message in stored.messages]
+        self._system_seeded = any(msg.get("role") == "system" for msg in self.messages)
+
+    def _save_session_history(
+        self,
+        *,
+        session_id: str | None,
+        user_id: str | None,
+        metadata: dict[str, Any] | None,
+        run: RunOutput | None,
+    ) -> None:
+        if self.session_store is None or not session_id:
+            return
+        existing = self.session_store.get_session(session_id=session_id, user_id=user_id)
+        run_entries = list(existing.runs) if existing else []
+        if run is not None:
+            new_run = SessionRun(
+                run_id=run.run_id,
+                input=run.input,
+                final_text=run.final_text,
+                cancelled=run.cancelled,
+                paused=run.paused,
+                total_tool_calls=run.total_tool_calls,
+            )
+            for idx, item in enumerate(run_entries):
+                if item.run_id == new_run.run_id:
+                    run_entries[idx] = new_run
+                    break
+            else:
+                run_entries.append(new_run)
+        record = SessionRecord(
+            session_id=session_id,
+            user_id=user_id or (existing.user_id if existing else None),
+            metadata=dict(existing.metadata if existing else {}),
+            messages=list(self.messages),
+            runs=run_entries,
+            created_at=existing.created_at if existing else "",
+            updated_at="",
+        )
+        if metadata:
+            record.metadata.update(metadata)
+        self.session_store.upsert_session(record)
 
     def _run_tool_rounds(
         self,
@@ -763,11 +829,13 @@ class Agent:
     ) -> RunOutput:
         if max_rounds < 1:
             raise ValueError("max_rounds must be >= 1")
+        if session_id:
+            self._load_session_history(session_id=session_id, user_id=user_id)
         normalized_input = self._normalize_input(user_input)
         input_validation_error = self._validate_input_schema(normalized_input, input_schema)
         serialized_input = self._serialize_input_for_message(normalized_input)
         if input_validation_error is not None:
-            return RunOutput(
+            run = RunOutput(
                 run_id=run_id or str(uuid4()),
                 input=serialized_input,
                 final_text=input_validation_error,
@@ -778,6 +846,13 @@ class Agent:
                 metadata=dict(metadata or {}),
                 output_validation_error=input_validation_error,
             )
+            self._save_session_history(
+                session_id=session_id,
+                user_id=user_id,
+                metadata=metadata,
+                run=run,
+            )
+            return run
 
         resolved_run_id = run_id or str(uuid4())
         self._register_run(resolved_run_id)
@@ -836,8 +911,20 @@ class Agent:
                 self._paused_runs[resolved_run_id] = run_output
             else:
                 self._paused_runs.pop(resolved_run_id, None)
+            self._save_session_history(
+                session_id=session_id,
+                user_id=user_id,
+                metadata=metadata,
+                run=run_output,
+            )
             return run_output
         finally:
+            self._save_session_history(
+                session_id=session_id,
+                user_id=user_id,
+                metadata=metadata,
+                run=None,
+            )
             self._complete_run(resolved_run_id)
 
     def run_loop(
@@ -851,6 +938,9 @@ class Agent:
         files: list[File] | None = None,
         tool_call_limit: int | None = None,
         input_schema: dict[str, Any] | None = None,
+        user_id: str | None = None,
+        session_id: str | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> str:
         run = self.run_output(
             user_input=user_input,
@@ -859,6 +949,9 @@ class Agent:
             audios=audios,
             videos=videos,
             files=files,
+            user_id=user_id,
+            session_id=session_id,
+            metadata=metadata,
             tool_call_limit=tool_call_limit,
             input_schema=input_schema,
         )
@@ -922,8 +1015,20 @@ class Agent:
                 self._paused_runs[resolved_run_id] = continued
             else:
                 self._paused_runs.pop(resolved_run_id, None)
+            self._save_session_history(
+                session_id=continued.session_id,
+                user_id=continued.user_id,
+                metadata=continued.metadata,
+                run=continued,
+            )
             return continued
         finally:
+            self._save_session_history(
+                session_id=session_id,
+                user_id=user_id,
+                metadata=metadata,
+                run=None,
+            )
             self._complete_run(resolved_run_id)
 
     async def _arun_tool_rounds(
@@ -1050,11 +1155,13 @@ class Agent:
     ) -> RunOutput:
         if max_rounds < 1:
             raise ValueError("max_rounds must be >= 1")
+        if session_id:
+            self._load_session_history(session_id=session_id, user_id=user_id)
         normalized_input = self._normalize_input(user_input)
         input_validation_error = self._validate_input_schema(normalized_input, input_schema)
         serialized_input = self._serialize_input_for_message(normalized_input)
         if input_validation_error is not None:
-            return RunOutput(
+            run = RunOutput(
                 run_id=run_id or str(uuid4()),
                 input=serialized_input,
                 final_text=input_validation_error,
@@ -1065,6 +1172,13 @@ class Agent:
                 metadata=dict(metadata or {}),
                 output_validation_error=input_validation_error,
             )
+            self._save_session_history(
+                session_id=session_id,
+                user_id=user_id,
+                metadata=metadata,
+                run=run,
+            )
+            return run
 
         resolved_run_id = run_id or str(uuid4())
         self._register_run(resolved_run_id)
@@ -1121,6 +1235,12 @@ class Agent:
                 self._paused_runs[resolved_run_id] = run_output
             else:
                 self._paused_runs.pop(resolved_run_id, None)
+            self._save_session_history(
+                session_id=session_id,
+                user_id=user_id,
+                metadata=metadata,
+                run=run_output,
+            )
             return run_output
         finally:
             self._complete_run(resolved_run_id)
@@ -1136,6 +1256,9 @@ class Agent:
         files: list[File] | None = None,
         tool_call_limit: int | None = None,
         input_schema: dict[str, Any] | None = None,
+        user_id: str | None = None,
+        session_id: str | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> str:
         run = await self.arun_output(
             user_input=user_input,
@@ -1144,6 +1267,9 @@ class Agent:
             audios=audios,
             videos=videos,
             files=files,
+            user_id=user_id,
+            session_id=session_id,
+            metadata=metadata,
             tool_call_limit=tool_call_limit,
             input_schema=input_schema,
         )
@@ -1207,6 +1333,12 @@ class Agent:
                 self._paused_runs[resolved_run_id] = continued
             else:
                 self._paused_runs.pop(resolved_run_id, None)
+            self._save_session_history(
+                session_id=continued.session_id,
+                user_id=continued.user_id,
+                metadata=continued.metadata,
+                run=continued,
+            )
             return continued
         finally:
             self._complete_run(resolved_run_id)
@@ -1301,6 +1433,8 @@ class Agent:
     ) -> Iterator[dict[str, Any]]:
         if max_rounds < 1:
             raise ValueError("max_rounds must be >= 1")
+        if session_id:
+            self._load_session_history(session_id=session_id, user_id=user_id)
         normalized_input = self._normalize_input(user_input)
         input_validation_error = self._validate_input_schema(normalized_input, input_schema)
         serialized_input = self._serialize_input_for_message(normalized_input)
@@ -1585,6 +1719,8 @@ class Agent:
     ) -> AsyncIterator[dict[str, Any]]:
         if max_rounds < 1:
             raise ValueError("max_rounds must be >= 1")
+        if session_id:
+            self._load_session_history(session_id=session_id, user_id=user_id)
         normalized_input = self._normalize_input(user_input)
         input_validation_error = self._validate_input_schema(normalized_input, input_schema)
         serialized_input = self._serialize_input_for_message(normalized_input)
