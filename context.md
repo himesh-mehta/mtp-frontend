@@ -124,7 +124,6 @@
   - events
 - Keep examples practical but non-coupling for future providers.
 
-
 read all the docs, codes and analyze the entire codebase
 <context>
 [agno_library\agno\Lib\site-packages\agno\models\anthropic\claude.py

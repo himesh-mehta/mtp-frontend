@@ -5,18 +5,18 @@ import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "src"))
 
-from mtp import Agent, MTPAgent, ToolRegistry, load_dotenv_if_available
+from mtp import Agent
 from mtp.providers import Groq
 from mtp.toolkits import CalculatorToolkit, FileToolkit, PythonToolkit, ShellToolkit
 
 
 def main() -> None:
-    load_dotenv_if_available()
+    Agent.load_dotenv_if_available()
 
-    calculator_tools = ToolRegistry()
+    calculator_tools = Agent.ToolRegistry()
     calculator_tools.register_toolkit_loader("calculator", CalculatorToolkit())
 
-    tools = ToolRegistry()
+    tools = Agent.ToolRegistry()
     tools.register_toolkit_loader("file", FileToolkit(base_dir=pathlib.Path.cwd()))
     tools.register_toolkit_loader("python", PythonToolkit(base_dir=pathlib.Path.cwd()))
     tools.register_toolkit_loader("shell", ShellToolkit(base_dir=pathlib.Path.cwd()))
@@ -34,7 +34,7 @@ def main() -> None:
         strict_dependency_mode=True,
     )
 
-    agent = MTPAgent(
+    agent = Agent.MTPAgent(
         provider=provider,
         tools=tools,
         mode="orchestration",
