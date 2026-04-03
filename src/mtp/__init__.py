@@ -38,6 +38,18 @@ from .toolkits import (
 )
 from .transport import HTTPTransportServer, run_stdio_transport
 
+# Convenience aliases for minimal import style:
+# from mtp import Agent
+# tools = Agent.ToolRegistry()
+# helper = Agent.MTPAgent(...)
+Agent.MTPAgent = MTPAgent
+Agent.ToolRegistry = ToolRegistry
+Agent.Audio = Audio
+Agent.Image = Image
+Agent.Video = Video
+Agent.File = File
+Agent.load_dotenv_if_available = staticmethod(load_dotenv_if_available)
+
 __all__ = [
     "Agent",
     "AgentAction",
