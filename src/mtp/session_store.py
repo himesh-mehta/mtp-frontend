@@ -4,6 +4,7 @@ from dataclasses import asdict, dataclass, field, is_dataclass
 from datetime import UTC, datetime
 import json
 from pathlib import Path
+import re
 import threading
 from typing import Any, Protocol
 
@@ -177,4 +178,286 @@ class JsonSessionStore:
                 rows.append(serialized)
 
             self._write_all(rows)
+            return SessionRecord.from_dict(serialized)
+
+
+def _validate_sql_identifier(value: str) -> str:
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", value):
+        raise ValueError(f"Invalid SQL identifier: {value!r}")
+    return value
+
+
+def _parse_json_blob(value: Any, *, fallback: Any) -> Any:
+    if value is None:
+        return fallback
+    if isinstance(value, (dict, list)):
+        return value
+    if isinstance(value, bytes):
+        value = value.decode("utf-8", errors="replace")
+    if isinstance(value, str):
+        if not value.strip():
+            return fallback
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            return fallback
+        return parsed
+    return fallback
+
+
+class PostgresSessionStore:
+    def __init__(self, *, db_url: str, session_table: str = "mtp_sessions") -> None:
+        self.db_url = db_url
+        self.session_table = _validate_sql_identifier(session_table)
+        self._lock = threading.RLock()
+        try:
+            import psycopg  # type: ignore
+        except Exception as exc:  # noqa: BLE001
+            raise ImportError("psycopg is required for PostgresSessionStore. Install with: pip install psycopg") from exc
+        self._psycopg = psycopg
+        self._ensure_schema()
+
+    def _connect(self) -> Any:
+        return self._psycopg.connect(self.db_url)
+
+    def _ensure_schema(self) -> None:
+        query = f"""
+        CREATE TABLE IF NOT EXISTS {self.session_table} (
+            session_id TEXT PRIMARY KEY,
+            user_id TEXT NULL,
+            metadata JSONB NOT NULL,
+            messages JSONB NOT NULL,
+            runs JSONB NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(query)
+            conn.commit()
+
+    def _fetch_row(self, session_id: str) -> dict[str, Any] | None:
+        query = (
+            f"SELECT session_id, user_id, metadata, messages, runs, created_at, updated_at "
+            f"FROM {self.session_table} WHERE session_id = %s"
+        )
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(query, (session_id,))
+                row = cur.fetchone()
+                if row is None:
+                    return None
+                keys = [item[0] for item in cur.description or []]
+        if isinstance(row, dict):
+            return row
+        if isinstance(row, tuple):
+            return dict(zip(keys, row, strict=False))
+        return None
+
+    def get_session(self, session_id: str, *, user_id: str | None = None) -> SessionRecord | None:
+        with self._lock:
+            row = self._fetch_row(session_id)
+            if row is None:
+                return None
+            stored_user_id = row.get("user_id")
+            if user_id is not None and stored_user_id is not None and stored_user_id != user_id:
+                return None
+            payload = {
+                "session_id": row.get("session_id"),
+                "user_id": stored_user_id,
+                "metadata": _parse_json_blob(row.get("metadata"), fallback={}),
+                "messages": _parse_json_blob(row.get("messages"), fallback=[]),
+                "runs": _parse_json_blob(row.get("runs"), fallback=[]),
+                "created_at": row.get("created_at"),
+                "updated_at": row.get("updated_at"),
+            }
+            return SessionRecord.from_dict(payload)
+
+    def upsert_session(self, session: SessionRecord) -> SessionRecord:
+        with self._lock:
+            existing = self._fetch_row(session.session_id)
+            serialized = session.to_dict()
+            serialized["created_at"] = (existing or {}).get("created_at") or serialized.get("created_at") or _utc_now_iso()
+            serialized["updated_at"] = _utc_now_iso()
+            query = (
+                f"INSERT INTO {self.session_table} "
+                "(session_id, user_id, metadata, messages, runs, created_at, updated_at) "
+                "VALUES (%s, %s, %s::jsonb, %s::jsonb, %s::jsonb, %s, %s) "
+                "ON CONFLICT (session_id) DO UPDATE SET "
+                "user_id = EXCLUDED.user_id, "
+                "metadata = EXCLUDED.metadata, "
+                "messages = EXCLUDED.messages, "
+                "runs = EXCLUDED.runs, "
+                "created_at = EXCLUDED.created_at, "
+                "updated_at = EXCLUDED.updated_at"
+            )
+            params = (
+                serialized["session_id"],
+                serialized.get("user_id"),
+                json.dumps(serialized.get("metadata") or {}, ensure_ascii=True),
+                json.dumps(serialized.get("messages") or [], ensure_ascii=True),
+                json.dumps(serialized.get("runs") or [], ensure_ascii=True),
+                serialized["created_at"],
+                serialized["updated_at"],
+            )
+            with self._connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(query, params)
+                conn.commit()
+            return SessionRecord.from_dict(serialized)
+
+
+class MySQLSessionStore:
+    def __init__(self, *, host: str, user: str, password: str, database: str, port: int = 3306, session_table: str = "mtp_sessions") -> None:
+        self.host = host
+        self.user = user
+        self.password = password
+        self.database = database
+        self.port = port
+        self.session_table = _validate_sql_identifier(session_table)
+        self._lock = threading.RLock()
+        self._driver = self._resolve_driver()
+        self._ensure_schema()
+
+    def _resolve_driver(self) -> str:
+        try:
+            import pymysql  # type: ignore
+        except Exception:  # noqa: BLE001
+            pymysql = None
+        if pymysql is not None:
+            self._pymysql = pymysql
+            return "pymysql"
+        try:
+            import mysql.connector  # type: ignore
+        except Exception as exc:  # noqa: BLE001
+            raise ImportError(
+                "MySQLSessionStore requires either pymysql or mysql-connector-python. "
+                "Install with: pip install pymysql"
+            ) from exc
+        self._mysql_connector = mysql.connector
+        return "mysql-connector"
+
+    def _connect(self) -> Any:
+        if self._driver == "pymysql":
+            return self._pymysql.connect(  # type: ignore[attr-defined]
+                host=self.host,
+                user=self.user,
+                password=self.password,
+                database=self.database,
+                port=self.port,
+                charset="utf8mb4",
+                autocommit=False,
+            )
+        return self._mysql_connector.connect(  # type: ignore[attr-defined]
+            host=self.host,
+            user=self.user,
+            password=self.password,
+            database=self.database,
+            port=self.port,
+        )
+
+    def _ensure_schema(self) -> None:
+        query = f"""
+        CREATE TABLE IF NOT EXISTS {self.session_table} (
+            session_id VARCHAR(191) PRIMARY KEY,
+            user_id VARCHAR(191) NULL,
+            metadata LONGTEXT NOT NULL,
+            messages LONGTEXT NOT NULL,
+            runs LONGTEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+        conn = self._connect()
+        try:
+            cur = conn.cursor()
+            try:
+                cur.execute(query)
+            finally:
+                cur.close()
+            conn.commit()
+        finally:
+            conn.close()
+
+    def _fetch_row(self, session_id: str) -> dict[str, Any] | None:
+        query = (
+            f"SELECT session_id, user_id, metadata, messages, runs, created_at, updated_at "
+            f"FROM {self.session_table} WHERE session_id = %s"
+        )
+        conn = self._connect()
+        try:
+            cur = conn.cursor()
+            try:
+                cur.execute(query, (session_id,))
+                row = cur.fetchone()
+                if row is None:
+                    return None
+                keys = [item[0] for item in cur.description or []]
+            finally:
+                cur.close()
+        finally:
+            conn.close()
+        if isinstance(row, dict):
+            return row
+        if isinstance(row, tuple):
+            return dict(zip(keys, row, strict=False))
+        return None
+
+    def get_session(self, session_id: str, *, user_id: str | None = None) -> SessionRecord | None:
+        with self._lock:
+            row = self._fetch_row(session_id)
+            if row is None:
+                return None
+            stored_user_id = row.get("user_id")
+            if user_id is not None and stored_user_id is not None and stored_user_id != user_id:
+                return None
+            payload = {
+                "session_id": row.get("session_id"),
+                "user_id": stored_user_id,
+                "metadata": _parse_json_blob(row.get("metadata"), fallback={}),
+                "messages": _parse_json_blob(row.get("messages"), fallback=[]),
+                "runs": _parse_json_blob(row.get("runs"), fallback=[]),
+                "created_at": row.get("created_at"),
+                "updated_at": row.get("updated_at"),
+            }
+            return SessionRecord.from_dict(payload)
+
+    def upsert_session(self, session: SessionRecord) -> SessionRecord:
+        with self._lock:
+            existing = self._fetch_row(session.session_id)
+            serialized = session.to_dict()
+            serialized["created_at"] = (existing or {}).get("created_at") or serialized.get("created_at") or _utc_now_iso()
+            serialized["updated_at"] = _utc_now_iso()
+            query = (
+                f"INSERT INTO {self.session_table} "
+                "(session_id, user_id, metadata, messages, runs, created_at, updated_at) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s) "
+                "ON DUPLICATE KEY UPDATE "
+                "user_id = VALUES(user_id), "
+                "metadata = VALUES(metadata), "
+                "messages = VALUES(messages), "
+                "runs = VALUES(runs), "
+                "created_at = VALUES(created_at), "
+                "updated_at = VALUES(updated_at)"
+            )
+            params = (
+                serialized["session_id"],
+                serialized.get("user_id"),
+                json.dumps(serialized.get("metadata") or {}, ensure_ascii=True),
+                json.dumps(serialized.get("messages") or [], ensure_ascii=True),
+                json.dumps(serialized.get("runs") or [], ensure_ascii=True),
+                serialized["created_at"],
+                serialized["updated_at"],
+            )
+            conn = self._connect()
+            try:
+                cur = conn.cursor()
+                try:
+                    cur.execute(query, params)
+                finally:
+                    cur.close()
+                conn.commit()
+            finally:
+                conn.close()
             return SessionRecord.from_dict(serialized)

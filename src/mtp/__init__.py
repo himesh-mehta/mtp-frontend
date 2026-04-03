@@ -2,7 +2,14 @@ from .events import EventStreamContext
 from .config import load_dotenv_if_available
 from .policy import PolicyDecision, RiskPolicy
 from .agent import Agent, AgentAction, ProviderAdapter, RunOutput
-from .session_store import JsonSessionStore, SessionRecord, SessionRun, SessionStore
+from .session_store import (
+    JsonSessionStore,
+    MySQLSessionStore,
+    PostgresSessionStore,
+    SessionRecord,
+    SessionRun,
+    SessionStore,
+)
 from .exceptions import RetryAgentRun, StopAgentRun
 from .protocol import (
     ExecutionPlan,
@@ -67,6 +74,8 @@ __all__ = [
     "RunOutput",
     "SessionStore",
     "JsonSessionStore",
+    "PostgresSessionStore",
+    "MySQLSessionStore",
     "SessionRecord",
     "SessionRun",
     "ExecutionPlan",
