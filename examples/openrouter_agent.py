@@ -21,7 +21,7 @@ def main():
     # Note: Using a free model for demonstration. 
     # Requires OPENROUTER_API_KEY in your .env file.
     provider = OpenRouter(
-        model="qwen/qwen3.6-plus-preview:free",
+        model="qwen/qwen3.6-plus:free",
         site_name="MTP Project Demo"
     )
     

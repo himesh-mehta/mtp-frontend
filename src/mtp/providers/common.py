@@ -156,7 +156,7 @@ def extract_refs(value: Any) -> list[str]:
     return refs
 
 
-def normalize_refs(value: Any, id_by_index: dict[int, str]) -> Any:
+def normalize_refs(value: Any, id_by_index: dict[int, str], current_idx: int | None = None) -> Any:
     if isinstance(value, dict):
         normalized: dict[str, Any] = {}
         for key, item in value.items():
@@ -171,15 +171,19 @@ def normalize_refs(value: Any, id_by_index: dict[int, str]) -> Any:
                     if match:
                         idx = int(match.group(1))
                         normalized[key] = id_by_index.get(idx, item)
+                    elif item.lower() in ("result", "last", "last_call", "prev", "previous"):
+                        # Map to previous call if available
+                        target_idx = current_idx - 1 if current_idx is not None else 0
+                        normalized[key] = id_by_index.get(max(0, target_idx), item)
                     else:
                         normalized[key] = item
                 else:
                     normalized[key] = item
             else:
-                normalized[key] = normalize_refs(item, id_by_index)
+                normalized[key] = normalize_refs(item, id_by_index, current_idx)
         return normalized
     if isinstance(value, list):
-        return [normalize_refs(item, id_by_index) for item in value]
+        return [normalize_refs(item, id_by_index, current_idx) for item in value]
     return value
 
 

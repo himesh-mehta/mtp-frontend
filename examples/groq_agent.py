@@ -56,7 +56,7 @@ def main() -> None:
 
     # Main provider with all exposed constructor controls.
     provider = Groq(
-        model="moonshotai/kimi-k2-instruct",
+        model="llama-3.3-70b-versatile",
         system_prompt="You are a precise tool-using assistant. Prefer explicit tool calls when needed.",
         temperature=0.0,
         tool_choice="auto",
@@ -67,7 +67,7 @@ def main() -> None:
 
     # Optional output refinement providers (same backend, independent settings).
     output_model = Groq(
-        model="moonshotai/kimi-k2-instruct",
+        model="llama-3.3-70b-versatile",
         temperature=0.0,
         tool_choice="auto",
         parallel_tool_calls=False,
@@ -75,7 +75,7 @@ def main() -> None:
         strict_dependency_mode=False,
     )
     parser_model = Groq(
-        model="moonshotai/kimi-k2-instruct",
+        model="llama-3.3-70b-versatile",
         temperature=0.0,
         tool_choice="auto",
         parallel_tool_calls=False,

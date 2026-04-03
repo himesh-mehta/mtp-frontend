@@ -63,7 +63,7 @@ def main() -> None:
     tools.register_toolkit_loader("github", GitHubToolkit())
 
     # 3. Setup your REAL free provider!
-    provider = OpenRouter(model="qwen/qwen3.6-plus-preview:free")
+    provider = OpenRouter(model="qwen/qwen3.6-plus:free")
 
     # 4. Create and run the agent
     agent = Agent(provider=provider, tools=tools, debug_mode=True)
@@ -72,7 +72,7 @@ def main() -> None:
     response = agent.run("Please use my profile and open an issue.")
     print(f"\nFinal Answer: {response}")
 
-    print("\nMessages:")
+    print("\nMTP Messages Registry:")
     for msg in agent.messages:
         print(msg)
 

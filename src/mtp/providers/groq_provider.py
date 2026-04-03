@@ -84,7 +84,7 @@ class GroqToolCallingProvider(ProviderAdapter):
 
         return batches
 
-    def _normalize_refs(self, value: Any, id_by_index: dict[int, str]) -> Any:
+    def _normalize_refs(self, value: Any, id_by_index: dict[int, str], current_idx: int | None = None) -> Any:
         if isinstance(value, dict):
             normalized = {}
             for k, v in value.items():
@@ -100,15 +100,19 @@ class GroqToolCallingProvider(ProviderAdapter):
                         if match:
                             idx = int(match.group(1))
                             normalized[k] = id_by_index.get(idx, ref_value)
+                        elif ref_value.lower() in ("result", "last", "last_call", "prev", "previous"):
+                            # If we know the current call index, default to the previous one
+                            target_idx = current_idx - 1 if current_idx is not None else 0
+                            normalized[k] = id_by_index.get(max(0, target_idx), ref_value)
                         else:
                             normalized[k] = ref_value
                     else:
                         normalized[k] = ref_value
                 else:
-                    normalized[k] = self._normalize_refs(v, id_by_index)
+                    normalized[k] = self._normalize_refs(v, id_by_index, current_idx)
             return normalized
         if isinstance(value, list):
-            return [self._normalize_refs(v, id_by_index) for v in value]
+            return [self._normalize_refs(v, id_by_index, current_idx) for v in value]
         return value
 
     def _make_client(self, api_key: str | None) -> Any:
@@ -156,9 +160,9 @@ class GroqToolCallingProvider(ProviderAdapter):
                 {
                     "role": "system",
                     "content": (
-                        "Strict dependency mode: if one tool call depends on another tool output, "
-                        "pass that value using a JSON ref object like {\"$ref\":\"<tool_call_id>\"} "
-                        "inside arguments. Do not hardcode derived intermediate values."
+                        "Strict dependency mode enabled. If a tool call depends on a value from an earlier tool call in this same response, "
+                        "reference it using a JSON object: {\"$ref\": <index>}, where <index> is the 0-based position of the tool call you want to use. "
+                        "Example: if the first tool call is calculator.add, the second tool can use {\"$ref\": 0} as an argument."
                     ),
                 }
             )
@@ -241,8 +245,7 @@ class GroqToolCallingProvider(ProviderAdapter):
                 )
 
             for idx, call_id, fn_name, parsed_args in parsed_calls:
-                _ = idx
-                normalized_args = self._normalize_refs(parsed_args, id_by_index)
+                normalized_args = self._normalize_refs(parsed_args, id_by_index, current_idx=idx)
                 depends_on = list(dict.fromkeys(self._extract_refs(normalized_args)))
                 mtp_calls.append(
                     ToolCall(
