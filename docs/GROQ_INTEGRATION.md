@@ -31,23 +31,22 @@ GROQ_API_KEY=your_groq_api_key_here
 Use provider-agnostic config loading once at app startup:
 
 ```python
-from mtp import load_dotenv_if_available
+from mtp import Agent
 
-load_dotenv_if_available()  # checks .env first, then .env.example
+Agent.load_dotenv_if_available()  # checks .env first, then .env.example
 ```
 
 ## Minimal usage
 
 ```python
-from mtp import Agent, ToolRegistry, ToolSpec
-from mtp import load_dotenv_if_available
+from mtp import Agent
 from mtp.providers import Groq
 
-load_dotenv_if_available()
+Agent.load_dotenv_if_available()
 
-registry = ToolRegistry()
+registry = Agent.ToolRegistry()
 registry.register_tool(
-    ToolSpec(name="github.list_repos", description="List repos", input_schema={"type": "object"}),
+    Agent.ToolSpec(name="github.list_repos", description="List repos", input_schema={"type": "object"}),
     lambda username: {"repos": ["mtp-core"]},
 )
 

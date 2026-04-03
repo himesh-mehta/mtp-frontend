@@ -16,10 +16,10 @@ MTP also includes optional search/web-scrape toolkits inspired by Agno:
 Use them with:
 
 ```python
-from mtp import ToolRegistry, register_local_toolkits
+from mtp import Agent
 
-registry = ToolRegistry()
-register_local_toolkits(registry, base_dir=".")
+registry = Agent.ToolRegistry()
+Agent.register_local_toolkits(registry, base_dir=".")
 ```
 
 ## Discovery + lazy loading
