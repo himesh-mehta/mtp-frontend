@@ -46,8 +46,12 @@ Implemented now:
 - structured input schema validation
 - output model/parser model refinement pipeline
 - dynamic tool updates (`add_tool`, `set_tools`)
+- session persistence (`JsonSessionStore`, `PostgresSessionStore`, `MySQLSessionStore`)
 
 Still needed to reach full ecosystem/library maturity:
 - CLI scaffolding
 - deeper provider feature parity and capability matrix
 - docs site and benchmark suite
+
+Related:
+- [Storage and Sessions](C:\Users\prajw\Downloads\MTP\docs\STORAGE.md)

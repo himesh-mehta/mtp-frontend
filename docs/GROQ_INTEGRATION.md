@@ -84,3 +84,6 @@ Current scope is one model-driven tool round plus final response. Multi-round ch
   - set `GROQ_API_KEY` in shell or `.env`
 - model returns no tool call
   - improve tool description/schema and system prompt specificity
+
+Related:
+- [Storage and Sessions](C:\Users\prajw\Downloads\MTP\docs\STORAGE.md)
