@@ -75,6 +75,19 @@ agent.print_response("Give me a short summary.", max_rounds=4, stream=True, stre
 agent.print_response("Give me a short summary.", max_rounds=4, stream=True, stream_events=True, event_format="json")
 ```
 
+## Persist conversation sessions (JSON database)
+
+```python
+from mtp import Agent, JsonSessionStore
+from mtp.providers import OpenAI
+
+session_store = JsonSessionStore(db_path="tmp/mtp_json_db")
+agent = Agent.MTPAgent(provider=OpenAI(model="gpt-4o"), tools=tools, session_store=session_store)
+
+agent.run("Remember this: project codename is Atlas.", session_id="chat-1", user_id="u1")
+agent.run("What is the project codename?", session_id="chat-1", user_id="u1")
+```
+
 ## Run examples
 
 ```bash

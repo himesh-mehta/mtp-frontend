@@ -20,6 +20,7 @@ Agent(
     system_instructions: str | None = None,
     stream_chunk_size: int = 40,
     max_history_messages: int = 200,
+    session_store: SessionStore | None = None,
     mode: str = "standalone",
     members: dict[str, Agent] | None = None,
 )
@@ -43,6 +44,9 @@ When `mode` is `delegator` or `orchestration`, each member is exposed as a tool:
 - `arun(user_input: Any) -> str`
 - `run_loop(user_input: Any, max_rounds: int = 5, *, tool_call_limit: int | None = None, input_schema: dict | None = None) -> str`
 - `arun_loop(...) -> str`
+
+`run`/`arun`/`run_loop`/`arun_loop` also accept optional `user_id`, `session_id`, and `metadata`.
+When `session_store` is configured and `session_id` is provided, message history is loaded and persisted automatically.
 
 `user_input` can be a string, dict, list, or model-like object (`model_dump`/`dict` supported).
 
