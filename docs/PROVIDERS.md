@@ -56,12 +56,12 @@ from .anthropic_provider import AnthropicToolCallingProvider
 ## 3) Use provider directly
 
 ```python
-from mtp import MTPAgent, ToolRegistry
+from mtp import Agent
 from mtp.providers import AnthropicToolCallingProvider
 
 provider = AnthropicToolCallingProvider(model="claude-...")
-registry = ToolRegistry()
-agent = MTPAgent(provider=provider, tools=registry)
+registry = Agent.ToolRegistry()
+agent = Agent.MTPAgent(provider=provider, tools=registry)
 ```
 
 ## Notes
