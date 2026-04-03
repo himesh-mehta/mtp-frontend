@@ -48,6 +48,11 @@ When `mode` is `delegator` or `orchestration`, each member is exposed as a tool:
 `run`/`arun`/`run_loop`/`arun_loop` also accept optional `user_id`, `session_id`, and `metadata`.
 When `session_store` is configured and `session_id` is provided, message history is loaded and persisted automatically.
 
+Built-in stores:
+- `JsonSessionStore`
+- `PostgresSessionStore`
+- `MySQLSessionStore`
+
 `user_input` can be a string, dict, list, or model-like object (`model_dump`/`dict` supported).
 
 ### Structured input

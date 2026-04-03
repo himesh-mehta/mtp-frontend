@@ -88,6 +88,21 @@ agent.run("Remember this: project codename is Atlas.", session_id="chat-1", user
 agent.run("What is the project codename?", session_id="chat-1", user_id="u1")
 ```
 
+PostgreSQL and MySQL session stores are also available:
+
+```python
+from mtp import PostgresSessionStore, MySQLSessionStore
+
+pg_store = PostgresSessionStore(db_url="postgresql://user:pass@localhost:5432/mtp")
+my_store = MySQLSessionStore(
+    host="localhost",
+    user="root",
+    password="secret",
+    database="mtp",
+    port=3306,
+)
+```
+
 ## Run examples
 
 ```bash
