@@ -42,13 +42,13 @@ GROQ_API_KEY=your_groq_api_key_here
 ## Create an agent (local toolkits + Groq)
 
 ```python
-from mtp import MTPAgent, ToolRegistry, load_dotenv_if_available
+from mtp import Agent
 from mtp.providers import Groq
 from mtp.toolkits import CalculatorToolkit, FileToolkit, PythonToolkit, ShellToolkit
 
-load_dotenv_if_available()
+Agent.load_dotenv_if_available()
 
-tools = ToolRegistry()
+tools = Agent.ToolRegistry()
 tools.register_toolkit_loader("calculator", CalculatorToolkit())
 tools.register_toolkit_loader("file", FileToolkit(base_dir="."))
 tools.register_toolkit_loader("python", PythonToolkit(base_dir="."))
@@ -56,7 +56,7 @@ tools.register_toolkit_loader("shell", ShellToolkit(base_dir="."))
 
 provider = Groq(model="llama-3.3-70b-versatile")
 
-agent = MTPAgent(
+agent = Agent.MTPAgent(
     provider=provider,
     tools=tools,
     instructions="Use tools when needed and return concise answers.",
