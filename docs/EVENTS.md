@@ -127,3 +127,6 @@ Every event includes:
 
 Providers only produce actions/plans and optional token streams.  
 The Agent owns event emission, so frontend code can consume one stable event model regardless of provider.
+
+Related:
+- [Storage and Sessions](C:\Users\prajw\Downloads\MTP\docs\STORAGE.md)

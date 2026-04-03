@@ -72,3 +72,6 @@ spec = Agent.tool_spec_from_callable(add, namespace="custom")
 - Keep parameter names explicit and stable.
 - Mark risk level correctly (`read_only`, `write`, `destructive`).
 - For side effects, prefer explicit user confirmation policy.
+
+Related:
+- [Storage and Sessions](C:\Users\prajw\Downloads\MTP\docs\STORAGE.md)
