@@ -8,6 +8,7 @@ import unittest
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "src"))
 
 from mtp import (
+    MCPAuthDecision,
     MCPJsonRpcServer,
     MCPPrompt,
     MCPPromptArgument,
@@ -108,6 +109,35 @@ class MCPAdapterTests(unittest.TestCase):
                 "id": "init-2",
                 "method": "initialize",
                 "params": {"auth_token": "secret"},
+            }
+        )
+        assert allowed is not None
+        self.assertIn("result", allowed)
+
+    def test_auth_provider_can_return_oauth_challenge(self) -> None:
+        class _OAuthProvider:
+            def authorize(self, token, request, context):
+                if token == "ok-token":
+                    return MCPAuthDecision(allowed=True)
+                return MCPAuthDecision(
+                    allowed=False,
+                    message="Missing OAuth bearer token",
+                    www_authenticate='Bearer realm="mtp", error="invalid_token"',
+                    details={"hint": "Use bearer token"},
+                )
+
+        server = MCPJsonRpcServer(tools=self._new_registry(), auth_provider=_OAuthProvider())
+        denied = server.handle_request({"jsonrpc": "2.0", "id": "init-1", "method": "initialize", "params": {}})
+        assert denied is not None
+        self.assertEqual(denied["error"]["code"], -32001)
+        self.assertIn("www_authenticate", denied["error"]["data"])
+
+        allowed = server.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": "init-2",
+                "method": "initialize",
+                "params": {"auth_token": "ok-token"},
             }
         )
         assert allowed is not None
@@ -292,3 +322,22 @@ class MCPAdapterAsyncTests(unittest.IsolatedAsyncioTestCase):
         assert response is not None
         self.assertIn("error", response)
         self.assertEqual(response["error"]["code"], -32800)
+
+    async def test_async_auth_provider_is_supported(self) -> None:
+        class _AsyncAuthProvider:
+            async def authorize(self, token, request, context):
+                await asyncio.sleep(0)
+                return MCPAuthDecision(allowed=token == "async-ok")
+
+        server = MCPJsonRpcServer(tools=self._new_registry(), auth_provider=_AsyncAuthProvider())
+        denied = await server.ahandle_request(
+            {"jsonrpc": "2.0", "id": "init-1", "method": "initialize", "params": {"auth_token": "bad"}}
+        )
+        assert denied is not None
+        self.assertEqual(denied["error"]["code"], -32001)
+
+        allowed = await server.ahandle_request(
+            {"jsonrpc": "2.0", "id": "init-2", "method": "initialize", "params": {"auth_token": "async-ok"}}
+        )
+        assert allowed is not None
+        self.assertIn("result", allowed)

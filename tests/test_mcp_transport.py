@@ -11,7 +11,7 @@ from urllib import parse, request
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "src"))
 
-from mtp import MCPHTTPTransportServer, MCPJsonRpcServer, ToolRegistry, ToolSpec
+from mtp import MCPAuthDecision, MCPHTTPTransportServer, MCPJsonRpcServer, ToolRegistry, ToolSpec
 
 
 class MCPHTTPTransportTests(unittest.TestCase):
@@ -62,6 +62,36 @@ class MCPHTTPTransportTests(unittest.TestCase):
             self.assertEqual(status, 200)
             self.assertIn("result", payload)
             self.assertEqual(headers.get("MCP-Session-Id"), "sess-1")
+        finally:
+            transport.shutdown()
+            thread.join(timeout=1)
+
+    def test_http_transport_sets_www_authenticate_header(self) -> None:
+        class _OAuthProvider:
+            def authorize(self, token, request, context):
+                return MCPAuthDecision(
+                    allowed=False,
+                    message="Unauthorized",
+                    www_authenticate='Bearer realm="mtp", error="invalid_token"',
+                )
+
+        registry = ToolRegistry()
+        registry.register_tool(ToolSpec(name="calc.add", description="add"), lambda a, b: a + b)
+        server = MCPJsonRpcServer(tools=registry, auth_provider=_OAuthProvider())
+
+        port = self._free_port()
+        transport = MCPHTTPTransportServer("127.0.0.1", port, server)
+        thread = threading.Thread(target=transport.start, daemon=True)
+        thread.start()
+        time.sleep(0.1)
+        try:
+            status, payload, headers = self._post_json(
+                f"http://127.0.0.1:{port}/rpc",
+                {"jsonrpc": "2.0", "id": "init-1", "method": "initialize", "params": {}},
+            )
+            self.assertEqual(status, 200)
+            self.assertIn("error", payload)
+            self.assertEqual(headers.get("WWW-Authenticate"), 'Bearer realm="mtp", error="invalid_token"')
         finally:
             transport.shutdown()
             thread.join(timeout=1)
