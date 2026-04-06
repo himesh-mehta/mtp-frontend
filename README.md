@@ -35,6 +35,25 @@ Canonical direction document:
 pip install mtpx
 ```
 
+Common optional installs:
+
+```bash
+# Groq + dotenv helper
+pip install "mtpx[groq,dotenv]"
+
+# OpenAI + Anthropic providers
+pip install "mtpx[openai,anthropic,dotenv]"
+
+# Web toolkits
+pip install "mtpx[toolkits-web]"
+
+# Database session stores
+pip install "mtpx[stores-db]"
+
+# Everything optional
+pip install "mtpx[all]"
+```
+
 Verify installation:
 ```bash
 python -c "import mtp; print(f'MTPX version {mtp.__version__} installed successfully!')"
@@ -51,11 +70,10 @@ python -m venv .venv
 pip install -e .
 ```
 
-### Provider SDKs and dotenv (install separately)
+### Provider SDKs and dotenv (explicit alternative)
 
 ```bash
-pip install groq
-pip install python-dotenv
+pip install "mtpx[groq,dotenv]"
 ```
 
 Copy `.env.example` to `.env` and set your key:
