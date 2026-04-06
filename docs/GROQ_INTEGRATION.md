@@ -70,11 +70,12 @@ provider = Groq(
 ## Current behavior
 
 1. Agent sends messages + tool schemas to Groq.
-2. If Groq emits `tool_calls`, MTP builds one parallel batch.
-3. Runtime executes tools.
-4. Agent sends tool results back to Groq for final text.
+2. If Groq emits `tool_calls`, MTP maps calls into dependency-aware batches.
+3. Runtime executes tools and appends tool results to conversation history.
+4. Agent can continue for multiple rounds (`max_rounds`) until final response.
+5. Final text is returned (or streamed when using stream APIs).
 
-Current scope is one model-driven tool round plus final response. Multi-round chaining is on roadmap.
+Multi-round chaining is implemented in the core agent loop and works with Groq through the shared provider adapter contract.
 
 ## Troubleshooting
 

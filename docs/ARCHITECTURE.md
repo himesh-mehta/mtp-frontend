@@ -44,6 +44,7 @@
 - Supports structured input validation (`input_schema`) and output refinement pipeline (`output_model`, `parser_model`).
 - Optional strict dependency enforcement (`strict_dependency_mode=True`) to reject guessed intermediate values in same-toolkit multi-call batches.
 - Injects internal MTP system instructions automatically; user instructions are layered on top.
+- Supports orchestration mode where member agents are exposed as delegation tools (`agent.member.<name>`).
 
 6. `mtp.providers`
 - Provider adapter interface for OpenAI/Anthropic/Gemini/Groq/etc.
@@ -152,6 +153,7 @@ Implemented:
 - Envelope transport primitives (stdio + HTTP).
 - Session persistence via JSON/PostgreSQL/MySQL stores.
 - Experimental MCP compatibility adapter around the existing runtime.
+- Multimodal tool/result payload support (`images`, `videos`, `audios`, `files`) across runtime and compatible providers.
 
 Next steps:
 - JSON schema + versioned wire format for MTP messages.
