@@ -59,6 +59,7 @@ from .mcp import (
     MCPServerInfo,
     run_mcp_stdio,
 )
+from .mcp_transport import MCPHTTPTransportServer, MCPWebSocketTransportServer, run_mcp_http, run_mcp_ws
 
 __version__ = "0.1.3"
 
@@ -142,6 +143,10 @@ __all__ = [
     "MCPPrompt",
     "MCPServerInfo",
     "run_mcp_stdio",
+    "MCPHTTPTransportServer",
+    "MCPWebSocketTransportServer",
+    "run_mcp_http",
+    "run_mcp_ws",
     "StrictViolation",
     "validate_strict_dependencies",
     "load_dotenv_if_available",
