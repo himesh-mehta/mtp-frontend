@@ -4,18 +4,18 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mtpx"
-version = "0.1.3"
+version = "0.1.5"
 description = "MTPX: Model Tool Protocol and agent runtime for Python"
 readme = "README.md"
 requires-python = ">=3.10"
-license = { text = "MIT" }
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [{ name = "Prajwal Ghadge", email = "prajwalghadge2005@gmail.com" }]
 maintainers = [{ name = "Himesh Mehta" }]
 keywords = ["agent", "llm", "ai", "tool-orchestration", "mcp", "model-context-protocol", "groq", "openai"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
