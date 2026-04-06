@@ -23,10 +23,15 @@ MTPX is a protocol-first Python library for agent tool orchestration, built to s
 pip install mtpx
 ```
 
+Verify installation:
+```bash
+python -c "import mtp; print(f'MTPX version {mtp.__version__} installed successfully!')"
+```
+
 ### From source (for development)
 
 ```bash
-git clone https://github.com/yourusername/MTP.git
+git clone https://github.com/yourusername/MTP.git  # Replace with your actual repo URL
 cd MTP
 python -m venv .venv
 .venv\Scripts\activate  # On Windows
@@ -145,3 +150,13 @@ python examples/mcp_stdio_server.py
 - `src/mtp/mcp.py`: MCP-compatible JSON-RPC adapter around `ToolRegistry`.
 - `src/mtp/providers/`: Provider adapters (`MockPlannerProvider` + OpenAI/Groq/OpenRouter/Gemini/Anthropic/SambaNova/Cerebras/DeepSeek/Mistral/Cohere/TogetherAI/FireworksAI).
 - `docs/`: documentation and implementation guides.
+
+## Contributors
+
+Created by [Prajwal Ghadge](mailto:prajwalghadge2005@gmail.com) with contributions from Himesh Mehta.
+
+See [CONTRIBUTORS.md](CONTRIBUTORS.md) for the full list of contributors.
+
+## License
+
+MIT License - see LICENSE file for details.
