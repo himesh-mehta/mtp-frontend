@@ -15,7 +15,7 @@ Implemented in codebase:
 - Delegation/orchestration mode (`mode="delegator"`/`"orchestration"` with member agents as tools).
 
 Still missing from roadmap goals:
-- MCP resources/prompts/progress/cancellation coverage.
+- Deep MCP transport depth (streaming over HTTP/WebSocket and stronger in-flight cancellation semantics).
 - WebSocket or resumable stream transport layer beyond current stdio/HTTP.
 - Provider capability matrix and deeper per-provider structured-output feature parity.
 - First-party CLI scaffolding (`mtp new`) and template generation.
