@@ -20,6 +20,9 @@ Agent(
     system_instructions: str | None = None,
     stream_chunk_size: int = 40,
     max_history_messages: int = 200,
+    send_media_to_model: bool = True,
+    enforce_provider_capabilities: bool = True,
+    allow_stream_fallback: bool = True,
     session_store: SessionStore | None = None,
     mode: str = "standalone",
     members: dict[str, Agent] | None = None,
@@ -35,6 +38,11 @@ When `mode` is `delegator` or `orchestration`, each member is exposed as a tool:
 - `agent.member.<member_name>`
 - input: `{"task": ..., "max_rounds": 5, "tool_call_limit": ...}`
 - output: member agent final text response.
+
+Capability enforcement options:
+- `enforce_provider_capabilities=True` (default): fail fast when requested features are unsupported by the active provider.
+- `allow_stream_fallback=True` (default): if provider has no native `finalize_stream`, stream APIs degrade safely by chunking the `finalize()` output.
+- `send_media_to_model=True` (default): include media payloads in model messages (still subject to capability guardrails).
 
 ## Runtime methods
 
@@ -123,6 +131,12 @@ Paused runs (for example from `StopAgentRun`) can be resumed by `run_id` or prio
 - `run_loop_stream(...) -> Iterator[str]`
 - `run_loop_events(...) -> Iterator[dict]`
 - `arun_loop_events(...) -> AsyncIterator[dict]`
+
+When provider capabilities are enabled:
+- media inputs (`images`, `audios`, `videos`, `files`) are validated against provider-declared supported modalities.
+- stream requests validate native finalize-stream support and either:
+  - fail fast with a clear error, or
+  - degrade to finalize-output chunk streaming when fallback is enabled.
 
 `MTPAgent.print_response(..., stream_events=True)` prints readable terminal logs by default.
 Use `event_format="json"` for raw JSON lines.
