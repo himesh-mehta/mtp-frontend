@@ -6,6 +6,36 @@ MTP supports both:
 
 Both styles are equivalent.
 
+## Install provider extras
+
+Use official extras instead of remembering each SDK package:
+
+```bash
+pip install "mtpx[groq]"
+pip install "mtpx[openai]"
+pip install "mtpx[anthropic]"
+pip install "mtpx[gemini]"
+pip install "mtpx[cohere]"
+pip install "mtpx[mistral]"
+```
+
+OpenAI-compatible provider families:
+
+```bash
+pip install "mtpx[openrouter]"
+pip install "mtpx[sambanova]"
+pip install "mtpx[cerebras]"
+pip install "mtpx[deepseek]"
+pip install "mtpx[togetherai]"
+pip install "mtpx[fireworksai]"
+```
+
+Install most provider SDKs at once:
+
+```bash
+pip install "mtpx[providers]"
+```
+
 ## Capability contract (enforceable)
 
 Each provider adapter exposes:

@@ -61,6 +61,12 @@ Use `allowed_commands=` to customize.
 
 These are dependency-optional and lazily loaded. You can register them without installing packages, but the first call will fail with an install hint if dependencies are missing.
 
+Install all web toolkit dependencies with one command:
+
+```bash
+pip install "mtpx[toolkits-web]"
+```
+
 ## `wikipedia.*`
 - `wikipedia.search_wikipedia`
 
