@@ -6,7 +6,15 @@ import unittest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "src"))
 
-from mtp import MCPJsonRpcServer, MCPServerInfo, ToolRegistry, ToolSpec
+from mtp import (
+    MCPJsonRpcServer,
+    MCPPrompt,
+    MCPPromptArgument,
+    MCPResource,
+    MCPServerInfo,
+    ToolRegistry,
+    ToolSpec,
+)
 
 
 class MCPAdapterTests(unittest.TestCase):
@@ -113,7 +121,125 @@ class MCPAdapterTests(unittest.TestCase):
         self.assertIsNone(response)
         self.assertTrue(server.client_initialized)
 
+    def test_initialize_includes_extended_capabilities(self) -> None:
+        server = MCPJsonRpcServer(tools=self._new_registry())
+        init = server.handle_request({"jsonrpc": "2.0", "id": "init", "method": "initialize", "params": {}})
+        assert init is not None
+        caps = init["result"]["capabilities"]
+        self.assertIn("tools", caps)
+        self.assertIn("resources", caps)
+        self.assertIn("prompts", caps)
+        self.assertTrue(caps["experimental"]["progressNotifications"])
+        self.assertTrue(caps["experimental"]["requestCancellation"])
+
+    def test_resources_list_and_read(self) -> None:
+        resources = [
+            MCPResource(
+                uri="memory://readme",
+                name="README",
+                description="In-memory readme",
+                mime_type="text/markdown",
+            )
+        ]
+        server = MCPJsonRpcServer(
+            tools=self._new_registry(),
+            resources=resources,
+            resource_reader=lambda uri: "# Hello MCP" if uri == "memory://readme" else "",
+        )
+        server.handle_request({"jsonrpc": "2.0", "id": "init", "method": "initialize", "params": {}})
+
+        listed = server.handle_request(
+            {"jsonrpc": "2.0", "id": "r-list", "method": "resources/list", "params": {}}
+        )
+        assert listed is not None
+        self.assertEqual(listed["result"]["resources"][0]["uri"], "memory://readme")
+
+        read = server.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": "r-read",
+                "method": "resources/read",
+                "params": {"uri": "memory://readme"},
+            }
+        )
+        assert read is not None
+        self.assertEqual(read["result"]["contents"][0]["text"], "# Hello MCP")
+
+    def test_prompts_list_and_get_with_template(self) -> None:
+        prompts = [
+            MCPPrompt(
+                name="summarize",
+                description="Summarize input",
+                arguments=[MCPPromptArgument(name="topic", required=True)],
+                template="Summarize this topic: {topic}",
+            )
+        ]
+        server = MCPJsonRpcServer(tools=self._new_registry(), prompts=prompts)
+        server.handle_request({"jsonrpc": "2.0", "id": "init", "method": "initialize", "params": {}})
+
+        listed = server.handle_request(
+            {"jsonrpc": "2.0", "id": "p-list", "method": "prompts/list", "params": {}}
+        )
+        assert listed is not None
+        self.assertEqual(listed["result"]["prompts"][0]["name"], "summarize")
+
+        got = server.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": "p-get",
+                "method": "prompts/get",
+                "params": {"name": "summarize", "arguments": {"topic": "MTP"}},
+            }
+        )
+        assert got is not None
+        text = got["result"]["messages"][0]["content"]["text"]
+        self.assertIn("Summarize this topic: MTP", text)
+
+    def test_cancelled_request_returns_cancel_error(self) -> None:
+        server = MCPJsonRpcServer(tools=self._new_registry())
+        server.handle_request({"jsonrpc": "2.0", "id": "init", "method": "initialize", "params": {}})
+
+        server.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "method": "$/cancelRequest",
+                "params": {"id": "call-cancel"},
+            }
+        )
+
+        cancelled = server.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": "call-cancel",
+                "method": "tools/call",
+                "params": {"name": "calc.add", "arguments": {"a": 1, "b": 2}},
+            }
+        )
+        assert cancelled is not None
+        self.assertEqual(cancelled["error"]["code"], -32800)
+        self.assertIn("cancelled", cancelled["error"]["message"].lower())
+
+    def test_progress_events_collected_for_tool_call(self) -> None:
+        server = MCPJsonRpcServer(tools=self._new_registry())
+        server.handle_request({"jsonrpc": "2.0", "id": "init", "method": "initialize", "params": {}})
+
+        server.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": "progress-call",
+                "method": "tools/call",
+                "params": {
+                    "name": "calc.add",
+                    "arguments": {"a": 3, "b": 4},
+                    "progressToken": "tok-1",
+                },
+            }
+        )
+        outbound = [e for e in server.progress_events if e.get("direction") == "outbound"]
+        self.assertGreaterEqual(len(outbound), 2)
+        self.assertEqual(outbound[0]["progress"], 0)
+        self.assertEqual(outbound[-1]["progress"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()
-
