@@ -6,7 +6,7 @@ import json
 import sys
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any, Callable
+from typing import Any, Awaitable, Callable, Protocol
 
 from .protocol import ToolCall, ToolRiskLevel, ToolSpec
 from .runtime import ToolRegistry
@@ -17,6 +17,33 @@ ResourceReader = Callable[[str], Any]
 PromptRenderer = Callable[[str, dict[str, Any]], Any]
 ProgressHandler = Callable[[JsonDict], None]
 ProgressListener = Callable[[JsonDict], None]
+
+
+@dataclass(slots=True)
+class MCPAuthContext:
+    method: str
+    request_id: Any
+    params: JsonDict
+    metadata: JsonDict
+
+
+@dataclass(slots=True)
+class MCPAuthDecision:
+    allowed: bool
+    error_code: int = -32001
+    message: str = "Unauthorized"
+    www_authenticate: str | None = None
+    details: JsonDict | None = None
+
+
+class MCPAuthProvider(Protocol):
+    def authorize(
+        self,
+        token: str | None,
+        request: JsonDict,
+        context: MCPAuthContext,
+    ) -> MCPAuthDecision | bool | Awaitable[MCPAuthDecision | bool]:
+        ...
 
 
 @dataclass(slots=True)
@@ -70,6 +97,7 @@ class MCPJsonRpcServer:
         require_auth: bool = False,
         auth_token: str | None = None,
         auth_validator: AuthValidator | None = None,
+        auth_provider: MCPAuthProvider | None = None,
         protocol_version: str = "2026-03-26",
         resources: list[MCPResource] | None = None,
         resource_reader: ResourceReader | None = None,
@@ -87,6 +115,7 @@ class MCPJsonRpcServer:
         self.require_auth = require_auth
         self.auth_token = auth_token
         self.auth_validator = auth_validator
+        self.auth_provider = auth_provider
         self.protocol_version = protocol_version
         self.resources = list(resources or [])
         self.resource_reader = resource_reader
@@ -161,10 +190,11 @@ class MCPJsonRpcServer:
             return None if is_notification else {"jsonrpc": "2.0", "id": request_id, "result": {}}
 
         if self._requires_auth(method):
-            if not self._authorized(request):
+            auth_decision = self._authorized_sync(request, method=method, request_id=request_id, params=params)
+            if not auth_decision.allowed:
                 if is_notification:
                     return None
-                return self._error_response(request_id, -32001, "Unauthorized")
+                return self._unauthorized_response(request_id, auth_decision)
 
         if method not in {"initialize", "ping", "notifications/initialized"} and not self._initialized:
             if is_notification:
@@ -225,10 +255,11 @@ class MCPJsonRpcServer:
             return None if is_notification else {"jsonrpc": "2.0", "id": request_id, "result": {}}
 
         if self._requires_auth(method):
-            if not self._authorized(request):
+            auth_decision = await self._authorized_async(request, method=method, request_id=request_id, params=params)
+            if not auth_decision.allowed:
                 if is_notification:
                     return None
-                return self._error_response(request_id, -32001, "Unauthorized")
+                return self._unauthorized_response(request_id, auth_decision)
 
         if method not in {"initialize", "ping", "notifications/initialized"} and not self._initialized:
             if is_notification:
@@ -270,7 +301,12 @@ class MCPJsonRpcServer:
         return None
 
     def _requires_auth(self, method: str) -> bool:
-        return self.require_auth or self.auth_validator is not None or self.auth_token is not None
+        return (
+            self.require_auth
+            or self.auth_provider is not None
+            or self.auth_validator is not None
+            or self.auth_token is not None
+        )
 
     def _authorized(self, request: JsonDict) -> bool:
         token: str | None = None
@@ -291,6 +327,93 @@ class MCPJsonRpcServer:
         if self.auth_token is not None:
             return token == self.auth_token
         return token is not None
+
+    def _extract_auth_token(self, request: JsonDict) -> str | None:
+        token: str | None = None
+        meta = request.get("meta")
+        if isinstance(meta, dict):
+            candidate = meta.get("authToken")
+            if isinstance(candidate, str):
+                token = candidate
+        if token is None:
+            params = request.get("params")
+            if isinstance(params, dict):
+                candidate = params.get("auth_token")
+                if isinstance(candidate, str):
+                    token = candidate
+        return token
+
+    def _auth_context(self, *, method: str, request_id: Any, params: JsonDict, request: JsonDict) -> MCPAuthContext:
+        metadata = request.get("meta")
+        if not isinstance(metadata, dict):
+            metadata = {}
+        return MCPAuthContext(
+            method=method,
+            request_id=request_id,
+            params=dict(params),
+            metadata=dict(metadata),
+        )
+
+    def _coerce_auth_decision(self, decision: MCPAuthDecision | bool) -> MCPAuthDecision:
+        if isinstance(decision, MCPAuthDecision):
+            return decision
+        return MCPAuthDecision(allowed=bool(decision))
+
+    def _authorized_sync(
+        self,
+        request: JsonDict,
+        *,
+        method: str,
+        request_id: Any,
+        params: JsonDict,
+    ) -> MCPAuthDecision:
+        token = self._extract_auth_token(request)
+        context = self._auth_context(method=method, request_id=request_id, params=params, request=request)
+
+        if self.auth_provider is not None:
+            result = self.auth_provider.authorize(token, request, context)
+            if asyncio.iscoroutine(result):
+                try:
+                    asyncio.get_running_loop()
+                except RuntimeError:
+                    resolved = asyncio.run(result)
+                    return self._coerce_auth_decision(resolved)
+                close_fn = getattr(result, "close", None)
+                if callable(close_fn):
+                    close_fn()
+                return MCPAuthDecision(
+                    allowed=False,
+                    message="Async auth provider requires async MCP handler (`ahandle_request`).",
+                )
+            return self._coerce_auth_decision(result)
+
+        if self.auth_validator is not None:
+            return MCPAuthDecision(allowed=bool(self.auth_validator(token, request)))
+        if self.auth_token is not None:
+            return MCPAuthDecision(allowed=token == self.auth_token)
+        return MCPAuthDecision(allowed=token is not None)
+
+    async def _authorized_async(
+        self,
+        request: JsonDict,
+        *,
+        method: str,
+        request_id: Any,
+        params: JsonDict,
+    ) -> MCPAuthDecision:
+        token = self._extract_auth_token(request)
+        context = self._auth_context(method=method, request_id=request_id, params=params, request=request)
+
+        if self.auth_provider is not None:
+            result = self.auth_provider.authorize(token, request, context)
+            if asyncio.iscoroutine(result):
+                result = await result
+            return self._coerce_auth_decision(result)
+        if self.auth_validator is not None:
+            return MCPAuthDecision(allowed=bool(self.auth_validator(token, request)))
+        if self.auth_token is not None:
+            return MCPAuthDecision(allowed=token == self.auth_token)
+        return MCPAuthDecision(allowed=token is not None)
 
     def _dispatch(self, method: str, params: JsonDict, *, request_id: Any = None) -> JsonDict:
         if method == "ping":
@@ -710,12 +833,28 @@ class MCPJsonRpcServer:
         except Exception:
             return str(payload)
 
-    def _error_response(self, request_id: Any, code: int, message: str) -> JsonDict:
+    def _error_response(self, request_id: Any, code: int, message: str, *, data: JsonDict | None = None) -> JsonDict:
+        error: JsonDict = {"code": code, "message": message}
+        if data:
+            error["data"] = data
         return {
             "jsonrpc": "2.0",
             "id": request_id,
-            "error": {"code": code, "message": message},
+            "error": error,
         }
+
+    def _unauthorized_response(self, request_id: Any, decision: MCPAuthDecision) -> JsonDict:
+        data: JsonDict = {}
+        if decision.www_authenticate:
+            data["www_authenticate"] = decision.www_authenticate
+        if decision.details:
+            data["details"] = decision.details
+        return self._error_response(
+            request_id,
+            decision.error_code,
+            decision.message,
+            data=data or None,
+        )
 
 
 def run_mcp_stdio(server: MCPJsonRpcServer) -> None:

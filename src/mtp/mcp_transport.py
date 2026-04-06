@@ -4,7 +4,6 @@ import asyncio
 import json
 import queue
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from threading import Event, Thread
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
@@ -77,6 +76,14 @@ class MCPHTTPTransportServer:
                 session_id = self._session_id()
                 if session_id:
                     self.send_header("MCP-Session-Id", session_id)
+                if (
+                    isinstance(payload, dict)
+                    and isinstance(payload.get("error"), dict)
+                    and isinstance(payload["error"].get("data"), dict)
+                ):
+                    challenge = payload["error"]["data"].get("www_authenticate")
+                    if isinstance(challenge, str) and challenge:
+                        self.send_header("WWW-Authenticate", challenge)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
