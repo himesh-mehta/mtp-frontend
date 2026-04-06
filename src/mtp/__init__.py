@@ -47,7 +47,7 @@ from .toolkits import (
 from .transport import HTTPTransportServer, run_stdio_transport
 from .mcp import MCPJsonRpcServer, MCPServerInfo, run_mcp_stdio
 
-__version__ = "0.1.0"
+__version__ = "0.1.3"
 
 # Convenience aliases for minimal import style:
 # from mtp import Agent
