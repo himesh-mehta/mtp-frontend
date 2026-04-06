@@ -1,5 +1,10 @@
 # MTP Python Architecture (v0.1)
 
+Direction note:
+- MTP protocol and MTP Agent SDK are distinct layers in the same project.
+- MCP support is an interoperability surface, not the core project identity.
+- Canonical statement: [Project Direction](/c:/Users/prajw/Downloads/MTP/docs/PROJECT_DIRECTION.md)
+
 ## Layered design
 
 1. `mtp.protocol`
@@ -170,8 +175,9 @@ Implemented:
 
 Next steps:
 - JSON schema + versioned wire format for MTP messages.
-- Transport abstraction (stdio/http/ws).
+- Resumable transport/session semantics across reconnects.
 - Streaming result chunks for long-running tools.
+- SSE transport option alongside existing stdio/http/ws primitives.
 - Provider capability matrix and richer per-provider options.
 - Expanded MCP production depth (streaming transport semantics, stronger in-flight cancellation, broader client compatibility matrix).
 

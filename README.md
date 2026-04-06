@@ -10,8 +10,20 @@ MTPX is a protocol-first Python library for agent tool orchestration, built to s
 - Policy-aware execution based on tool risk.
 - Multi-round model-tool-model loops.
 - Provider adapters (now including Groq, Gemini, OpenAi, Anthropic, Openrouter, etc.).
-- Transport primitives (stdio + HTTP envelope transport).
+- Transport primitives (stdio + HTTP + optional WebSocket envelope transport).
 - Experimental MCP JSON-RPC adapter over the same runtime core.
+
+## Direction
+
+This project has two explicit layers:
+
+- `MTP protocol`: protocol entities and execution semantics.
+- `MTP Agent SDK`: framework/runtime/providers/toolkits/transports built on top of MTP.
+
+MCP support is an interoperability capability, not the product identity.
+
+Canonical direction document:
+- [Project Direction](docs/PROJECT_DIRECTION.md)
 
 ## Quickstart
 
@@ -132,6 +144,7 @@ python examples/mcp_stdio_server.py
 - [Creating Tools](docs/CREATING_TOOLS.md)
 - [Events Contract](docs/EVENTS.md)
 - [Architecture](docs/ARCHITECTURE.md)
+- [Project Direction](docs/PROJECT_DIRECTION.md)
 - [Protocol Spec](docs/PROTOCOL_SPEC.md)
 - [Local Toolkits](docs/LOCAL_TOOLKITS.md)
 - [Groq Integration](docs/GROQ_INTEGRATION.md)
