@@ -45,6 +45,12 @@ from .toolkits import (
     register_local_toolkits,
 )
 from .transport import HTTPTransportServer, run_stdio_transport
+
+try:
+    from .transport import WebSocketTransportServer, run_ws_transport
+except Exception:
+    WebSocketTransportServer = None  # type: ignore[assignment]
+    run_ws_transport = None  # type: ignore[assignment]
 from .mcp import (
     MCPJsonRpcServer,
     MCPPrompt,
@@ -128,6 +134,8 @@ __all__ = [
     "register_local_toolkits",
     "HTTPTransportServer",
     "run_stdio_transport",
+    "WebSocketTransportServer",
+    "run_ws_transport",
     "MCPJsonRpcServer",
     "MCPResource",
     "MCPPromptArgument",
