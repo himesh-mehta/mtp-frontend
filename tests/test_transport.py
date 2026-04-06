@@ -6,15 +6,20 @@ import pathlib
 import socket
 import sys
 import threading
-import time
 import unittest
 from urllib import request
+
+import pytest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "src"))
 
 from mtp.schema import MessageEnvelope
 from mtp.transport.http import HTTPTransportServer
 from mtp.transport.stdio import run_stdio_transport
+from tests.harness_utils import wait_for_tcp_listener
+
+
+pytestmark = pytest.mark.integration
 
 
 class TransportTests(unittest.TestCase):
@@ -49,7 +54,7 @@ class TransportTests(unittest.TestCase):
         server = HTTPTransportServer("127.0.0.1", port, handler)
         thread = threading.Thread(target=server.start, daemon=True)
         thread.start()
-        time.sleep(0.1)
+        wait_for_tcp_listener("127.0.0.1", int(port), timeout_seconds=5)
 
         try:
             payload = MessageEnvelope.create(kind="hello", payload={"a": 1}).to_json().encode("utf-8")
@@ -107,7 +112,7 @@ class TransportTests(unittest.TestCase):
         server = HTTPTransportServer("127.0.0.1", port, handler)
         thread = threading.Thread(target=server.start, daemon=True)
         thread.start()
-        time.sleep(0.1)
+        wait_for_tcp_listener("127.0.0.1", int(port), timeout_seconds=5)
 
         try:
             cancel_payload = MessageEnvelope.create(
