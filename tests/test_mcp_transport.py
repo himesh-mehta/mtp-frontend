@@ -1,17 +1,26 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import pathlib
 import socket
 import sys
 import threading
 import time
+import uuid
 import unittest
 from urllib import parse, request
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "src"))
 
-from mtp import MCPAuthDecision, MCPHTTPTransportServer, MCPJsonRpcServer, ToolRegistry, ToolSpec
+from mtp import (
+    MCPAuthDecision,
+    MCPHTTPTransportServer,
+    MCPJsonRpcServer,
+    MCPWebSocketTransportServer,
+    ToolRegistry,
+    ToolSpec,
+)
 
 
 class MCPHTTPTransportTests(unittest.TestCase):
@@ -255,6 +264,198 @@ class MCPHTTPTransportTests(unittest.TestCase):
         finally:
             transport.shutdown()
             thread.join(timeout=1)
+
+    def test_http_transport_replay_persists_across_restart(self) -> None:
+        registry = ToolRegistry()
+        registry.register_tool(ToolSpec(name="calc.add", description="add"), lambda a, b: a + b)
+        server = MCPJsonRpcServer(tools=registry)
+
+        tmp_dir = pathlib.Path("tmp")
+        tmp_dir.mkdir(parents=True, exist_ok=True)
+        replay_path = tmp_dir / f"mcp_replay_{uuid.uuid4().hex}.json"
+
+        port_1 = self._free_port()
+        transport_1 = MCPHTTPTransportServer("127.0.0.1", port_1, server, replay_store_path=replay_path)
+        thread_1 = threading.Thread(target=transport_1.start, daemon=True)
+        thread_1.start()
+        time.sleep(0.1)
+        try:
+            self._post_json(
+                f"http://127.0.0.1:{port_1}/rpc",
+                {"jsonrpc": "2.0", "id": "init-1", "method": "initialize", "params": {}},
+            )
+            self._post_json(
+                f"http://127.0.0.1:{port_1}/rpc",
+                {
+                    "jsonrpc": "2.0",
+                    "id": "call-1",
+                    "method": "tools/call",
+                    "params": {"name": "calc.add", "arguments": {"a": 5, "b": 6}, "progressToken": "persist-1"},
+                },
+            )
+        finally:
+            transport_1.shutdown()
+            thread_1.join(timeout=1)
+
+        port_2 = self._free_port()
+        transport_2 = MCPHTTPTransportServer("127.0.0.1", port_2, server, replay_store_path=replay_path)
+        thread_2 = threading.Thread(target=transport_2.start, daemon=True)
+        thread_2.start()
+        time.sleep(0.1)
+        try:
+            status, payload = self._get_json(f"http://127.0.0.1:{port_2}/events?limit=20&since_id=0")
+            self.assertEqual(status, 200)
+            events = payload.get("events", [])
+            self.assertTrue(any(evt.get("progressToken") == "persist-1" for evt in events))
+        finally:
+            transport_2.shutdown()
+            thread_2.join(timeout=1)
+            try:
+                replay_path.unlink(missing_ok=True)
+            except Exception:
+                pass
+
+    def test_http_transport_scopes_events_by_session_and_auth(self) -> None:
+        registry = ToolRegistry()
+        registry.register_tool(ToolSpec(name="calc.add", description="add"), lambda a, b: a + b)
+        server = MCPJsonRpcServer(tools=registry)
+
+        port = self._free_port()
+        transport = MCPHTTPTransportServer("127.0.0.1", port, server)
+        thread = threading.Thread(target=transport.start, daemon=True)
+        thread.start()
+        time.sleep(0.1)
+        try:
+            self._post_json(
+                f"http://127.0.0.1:{port}/rpc",
+                {"jsonrpc": "2.0", "id": "init-a", "method": "initialize", "params": {}},
+                headers={"Authorization": "Bearer token-a", "MCP-Session-Id": "sess-a"},
+            )
+            self._post_json(
+                f"http://127.0.0.1:{port}/rpc",
+                {
+                    "jsonrpc": "2.0",
+                    "id": "call-a",
+                    "method": "tools/call",
+                    "params": {"name": "calc.add", "arguments": {"a": 1, "b": 1}, "progressToken": "scope-a"},
+                },
+                headers={"Authorization": "Bearer token-a", "MCP-Session-Id": "sess-a"},
+            )
+
+            self._post_json(
+                f"http://127.0.0.1:{port}/rpc",
+                {"jsonrpc": "2.0", "id": "init-b", "method": "initialize", "params": {}},
+                headers={"Authorization": "Bearer token-b", "MCP-Session-Id": "sess-b"},
+            )
+            self._post_json(
+                f"http://127.0.0.1:{port}/rpc",
+                {
+                    "jsonrpc": "2.0",
+                    "id": "call-b",
+                    "method": "tools/call",
+                    "params": {"name": "calc.add", "arguments": {"a": 2, "b": 2}, "progressToken": "scope-b"},
+                },
+                headers={"Authorization": "Bearer token-b", "MCP-Session-Id": "sess-b"},
+            )
+
+            status_a, payload_a = self._get_json(
+                f"http://127.0.0.1:{port}/events?limit=20",
+                headers={"Authorization": "Bearer token-a", "MCP-Session-Id": "sess-a"},
+            )
+            self.assertEqual(status_a, 200)
+            events_a = payload_a.get("events", [])
+            self.assertTrue(any(evt.get("progressToken") == "scope-a" for evt in events_a))
+            self.assertFalse(any(evt.get("progressToken") == "scope-b" for evt in events_a))
+
+            status_b, payload_b = self._get_json(
+                f"http://127.0.0.1:{port}/events?limit=20",
+                headers={"Authorization": "Bearer token-b", "MCP-Session-Id": "sess-b"},
+            )
+            self.assertEqual(status_b, 200)
+            events_b = payload_b.get("events", [])
+            self.assertTrue(any(evt.get("progressToken") == "scope-b" for evt in events_b))
+            self.assertFalse(any(evt.get("progressToken") == "scope-a" for evt in events_b))
+        finally:
+            transport.shutdown()
+            thread.join(timeout=1)
+
+
+class MCPWebSocketTransportTests(unittest.IsolatedAsyncioTestCase):
+    async def test_websocket_replay_method_returns_progress_backlog(self) -> None:
+        try:
+            import websockets
+        except Exception:
+            self.skipTest("websockets package is not installed")
+            return
+
+        registry = ToolRegistry()
+        registry.register_tool(ToolSpec(name="calc.add", description="add"), lambda a, b: a + b)
+        server = MCPJsonRpcServer(tools=registry)
+
+        sock = socket.socket()
+        sock.bind(("127.0.0.1", 0))
+        _, port = sock.getsockname()
+        sock.close()
+
+        transport = MCPWebSocketTransportServer("127.0.0.1", int(port), server)
+        await transport.start()
+        try:
+            uri = f"ws://127.0.0.1:{int(port)}?since_id=0&session_id=ws-sess"
+            async with websockets.connect(uri) as ws:
+                await ws.send(json.dumps({"jsonrpc": "2.0", "id": "init-1", "method": "initialize", "params": {}}))
+                _ = await ws.recv()
+
+                await ws.send(
+                    json.dumps(
+                        {
+                            "jsonrpc": "2.0",
+                            "id": "call-1",
+                            "method": "tools/call",
+                            "params": {
+                                "name": "calc.add",
+                                "arguments": {"a": 10, "b": 20},
+                                "progressToken": "ws-progress",
+                                "sessionId": "ws-sess",
+                            },
+                        }
+                    )
+                )
+
+                # Consume a few frames to allow progress + result messages to flow.
+                received: list[dict] = []
+                for _ in range(6):
+                    raw = await asyncio.wait_for(ws.recv(), timeout=3)
+                    payload = json.loads(raw)
+                    received.append(payload)
+                    if payload.get("id") == "call-1":
+                        break
+
+                await ws.send(
+                    json.dumps(
+                        {
+                            "jsonrpc": "2.0",
+                            "id": "replay-1",
+                            "method": "events/replay",
+                            "params": {"since_id": 0, "limit": 20},
+                        }
+                    )
+                )
+                replay_payload = None
+                for _ in range(8):
+                    replay_raw = await asyncio.wait_for(ws.recv(), timeout=3)
+                    candidate = json.loads(replay_raw)
+                    if candidate.get("id") == "replay-1":
+                        replay_payload = candidate
+                        break
+                self.assertIsNotNone(replay_payload)
+                assert replay_payload is not None
+                self.assertEqual(replay_payload.get("id"), "replay-1")
+                events = replay_payload.get("result", {}).get("events", [])
+                self.assertTrue(any(evt.get("progressToken") == "ws-progress" for evt in events))
+                self.assertIn("latest_event_id", replay_payload.get("result", {}))
+                self.assertIn("next_resume_token", replay_payload.get("result", {}))
+        finally:
+            await transport.shutdown()
 
 
 if __name__ == "__main__":
