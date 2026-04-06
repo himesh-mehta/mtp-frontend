@@ -11,7 +11,16 @@ from ..agent import AgentAction, ProviderAdapter
 from ..config import require_env
 from ..media import File, Image
 from ..protocol import ExecutionPlan, ToolCall, ToolResult, ToolSpec
-from .common import calls_to_dependency_batches, extract_refs, extract_usage_metrics, normalize_refs, safe_load_arguments
+from .common import (
+    ProviderCapabilities,
+    STRUCTURED_OUTPUT_CLIENT_VALIDATED,
+    USAGE_METRICS_RICH,
+    calls_to_dependency_batches,
+    extract_refs,
+    extract_usage_metrics,
+    normalize_refs,
+    safe_load_arguments,
+)
 
 
 class AnthropicToolCallingProvider(ProviderAdapter):
@@ -320,6 +329,21 @@ class AnthropicToolCallingProvider(ProviderAdapter):
         if texts:
             return "\n".join(texts).strip()
         return "Done."
+
+    def capabilities(self) -> ProviderCapabilities:
+        return ProviderCapabilities(
+            provider="anthropic",
+            supports_tool_calling=True,
+            supports_parallel_tool_calls=True,
+            input_modalities=["text", "image", "file"],
+            supports_tool_media_output=True,
+            supports_finalize_streaming=False,
+            usage_metrics_quality=USAGE_METRICS_RICH,
+            supports_reasoning_metadata=False,
+            structured_output_support=STRUCTURED_OUTPUT_CLIENT_VALIDATED,
+            supports_native_async=False,
+            allow_finalize_stream_fallback=True,
+        )
 
     async def anext_action(self, messages: list[dict[str, Any]], tools: list[ToolSpec]) -> AgentAction:
         return await asyncio.to_thread(self.next_action, messages, tools)
