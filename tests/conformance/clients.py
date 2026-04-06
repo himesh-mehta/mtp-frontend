@@ -7,11 +7,11 @@ import shlex
 import socket
 import subprocess
 import threading
-import time
 from typing import Any, Protocol
 from urllib import request
 
 from mtp import MCPHTTPTransportServer, MCPJsonRpcServer
+from tests.harness_utils import wait_for_tcp_listener
 
 
 class ConformanceClient(Protocol):
@@ -130,7 +130,8 @@ class HttpJsonRpcClient:
         self._auth_thread = threading.Thread(target=self._auth_transport.start, daemon=True)
         self._thread.start()
         self._auth_thread.start()
-        time.sleep(0.1)
+        wait_for_tcp_listener("127.0.0.1", int(self._port), timeout_seconds=5)
+        wait_for_tcp_listener("127.0.0.1", int(self._auth_port), timeout_seconds=5)
 
     def close(self) -> None:
         self._transport.shutdown()
@@ -285,4 +286,3 @@ class SubprocessExternalClient:
         if not isinstance(payload, dict):
             return {"ok": False, "error": "external client returned non-object payload"}
         return payload
-

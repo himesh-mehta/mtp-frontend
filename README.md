@@ -169,6 +169,7 @@ python examples/mcp_stdio_server.py
 - [Transport](docs/TRANSPORT.md)
 - [MCP Interop Adapter](docs/MCP_INTEROP.md)
 - [Publishing](docs/PUBLISHING.md)
+- [Testing](docs/TESTING.md)
 
 ## Repository structure
 - `src/mtp/protocol.py`: Core protocol entities (`ToolSpec`, `ToolCall`, `ExecutionPlan`, etc.).
