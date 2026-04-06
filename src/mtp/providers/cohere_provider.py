@@ -8,6 +8,9 @@ from ..agent import AgentAction, ProviderAdapter
 from ..config import require_env
 from ..protocol import ExecutionPlan, ToolCall, ToolResult, ToolSpec
 from .common import (
+    ProviderCapabilities,
+    STRUCTURED_OUTPUT_CLIENT_VALIDATED,
+    USAGE_METRICS_BASIC,
     calls_to_dependency_batches,
     extract_refs,
     normalize_refs,
@@ -326,6 +329,21 @@ class CohereToolCallingProvider(ProviderAdapter):
             elif isinstance(block, dict) and block.get("type") == "text":
                 texts.append(block.get("text", ""))
         return "\n".join(texts).strip() or "Done."
+
+    def capabilities(self) -> ProviderCapabilities:
+        return ProviderCapabilities(
+            provider="cohere",
+            supports_tool_calling=True,
+            supports_parallel_tool_calls=False,
+            input_modalities=["text"],
+            supports_tool_media_output=False,
+            supports_finalize_streaming=False,
+            usage_metrics_quality=USAGE_METRICS_BASIC,
+            supports_reasoning_metadata=False,
+            structured_output_support=STRUCTURED_OUTPUT_CLIENT_VALIDATED,
+            supports_native_async=False,
+            allow_finalize_stream_fallback=True,
+        )
 
     async def anext_action(self, messages: list[dict[str, Any]], tools: list[ToolSpec]) -> AgentAction:
         return await asyncio.to_thread(self.next_action, messages, tools)
