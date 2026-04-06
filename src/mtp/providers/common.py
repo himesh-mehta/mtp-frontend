@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+from dataclasses import dataclass, field
 import json
 import mimetypes
 import re
@@ -10,6 +11,75 @@ from urllib.request import Request, urlopen
 
 from ..media import Audio, File, Image, Video
 from ..protocol import ToolBatch, ToolCall
+
+USAGE_METRICS_NONE = "none"
+USAGE_METRICS_BASIC = "basic"
+USAGE_METRICS_RICH = "rich"
+
+STRUCTURED_OUTPUT_NONE = "none"
+STRUCTURED_OUTPUT_CLIENT_VALIDATED = "client_validated"
+STRUCTURED_OUTPUT_NATIVE_JSON_OBJECT = "native_json_object"
+STRUCTURED_OUTPUT_NATIVE_JSON_SCHEMA = "native_json_schema"
+
+
+@dataclass(slots=True)
+class ProviderCapabilities:
+    provider: str
+    supports_tool_calling: bool = True
+    supports_parallel_tool_calls: bool = False
+    input_modalities: list[str] = field(default_factory=lambda: ["text"])
+    supports_tool_media_output: bool = False
+    supports_finalize_streaming: bool = False
+    usage_metrics_quality: str = USAGE_METRICS_BASIC
+    supports_reasoning_metadata: bool = False
+    structured_output_support: str = STRUCTURED_OUTPUT_NONE
+    supports_native_async: bool = False
+    allow_finalize_stream_fallback: bool = True
+
+    def supports_input_modality(self, modality: str) -> bool:
+        return modality in set(self.input_modalities)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "provider": self.provider,
+            "supports_tool_calling": self.supports_tool_calling,
+            "supports_parallel_tool_calls": self.supports_parallel_tool_calls,
+            "input_modalities": sorted(set(self.input_modalities)),
+            "supports_tool_media_output": self.supports_tool_media_output,
+            "supports_finalize_streaming": self.supports_finalize_streaming,
+            "usage_metrics_quality": self.usage_metrics_quality,
+            "supports_reasoning_metadata": self.supports_reasoning_metadata,
+            "structured_output_support": self.structured_output_support,
+            "supports_native_async": self.supports_native_async,
+            "allow_finalize_stream_fallback": self.allow_finalize_stream_fallback,
+        }
+
+
+def capabilities_from_any(value: Any) -> ProviderCapabilities | None:
+    if value is None:
+        return None
+    if isinstance(value, ProviderCapabilities):
+        return value
+    if isinstance(value, dict):
+        provider = str(value.get("provider") or "unknown")
+        input_modalities = value.get("input_modalities")
+        if not isinstance(input_modalities, list):
+            input_modalities = ["text"]
+        normalized_modalities = [str(item) for item in input_modalities if isinstance(item, (str, int, float))]
+        return ProviderCapabilities(
+            provider=provider,
+            supports_tool_calling=bool(value.get("supports_tool_calling", True)),
+            supports_parallel_tool_calls=bool(value.get("supports_parallel_tool_calls", False)),
+            input_modalities=normalized_modalities or ["text"],
+            supports_tool_media_output=bool(value.get("supports_tool_media_output", False)),
+            supports_finalize_streaming=bool(value.get("supports_finalize_streaming", False)),
+            usage_metrics_quality=str(value.get("usage_metrics_quality", USAGE_METRICS_BASIC)),
+            supports_reasoning_metadata=bool(value.get("supports_reasoning_metadata", False)),
+            structured_output_support=str(value.get("structured_output_support", STRUCTURED_OUTPUT_NONE)),
+            supports_native_async=bool(value.get("supports_native_async", False)),
+            allow_finalize_stream_fallback=bool(value.get("allow_finalize_stream_fallback", True)),
+        )
+    return None
 
 
 def _read_value(obj: Any, key: str) -> Any:
