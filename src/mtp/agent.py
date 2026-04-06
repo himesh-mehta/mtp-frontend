@@ -13,6 +13,7 @@ from uuid import uuid4
 from .events import EventStreamContext
 from .media import Audio, File, Image, Video
 from .prompts import DEFAULT_MTP_SYSTEM_INSTRUCTIONS
+from .providers.common import ProviderCapabilities, capabilities_from_any
 from .session_store import SessionRecord, SessionRun, SessionStore
 from .runtime import (
     ExecutionCancelledError,
@@ -101,6 +102,8 @@ class Agent:
         stream_chunk_size: int = 40,
         max_history_messages: int = 200,
         send_media_to_model: bool = True,
+        enforce_provider_capabilities: bool = True,
+        allow_stream_fallback: bool = True,
         mode: str = "standalone",
         members: dict[str, "Agent"] | None = None,
         session_store: SessionStore | None = None,
@@ -123,6 +126,8 @@ class Agent:
         self.stream_chunk_size = stream_chunk_size
         self.max_history_messages = max_history_messages
         self.send_media_to_model = send_media_to_model
+        self.enforce_provider_capabilities = enforce_provider_capabilities
+        self.allow_stream_fallback = allow_stream_fallback
         self.mode = self._validate_mode(mode)
         self.members: dict[str, Agent] = {}
         self.session_store = session_store
@@ -133,6 +138,64 @@ class Agent:
         self._paused_runs: dict[str, RunOutput] = {}
         for name, member in (members or {}).items():
             self.add_member(name, member)
+
+    def _get_provider_capabilities(self) -> ProviderCapabilities | None:
+        if not self.enforce_provider_capabilities:
+            return None
+        caps_fn = getattr(self.provider, "capabilities", None)
+        if not callable(caps_fn):
+            return None
+        try:
+            return capabilities_from_any(caps_fn())
+        except Exception as exc:  # noqa: BLE001
+            self._debug(f"provider capabilities probe failed: {exc}")
+            return None
+
+    def _enforce_requested_input_modalities(
+        self,
+        *,
+        images: list[Image] | None = None,
+        audios: list[Audio] | None = None,
+        videos: list[Video] | None = None,
+        files: list[File] | None = None,
+    ) -> None:
+        if not self.send_media_to_model:
+            return
+        caps = self._get_provider_capabilities()
+        if caps is None:
+            return
+        requested: list[tuple[str, list[Any] | None]] = [
+            ("image", images),
+            ("audio", audios),
+            ("video", videos),
+            ("file", files),
+        ]
+        unsupported: list[str] = []
+        for modality, values in requested:
+            if values and not caps.supports_input_modality(modality):
+                unsupported.append(modality)
+        if not unsupported:
+            return
+        raise ValueError(
+            f"Provider '{caps.provider}' does not support requested input modalities: {sorted(set(unsupported))}. "
+            f"Supported modalities: {caps.input_modalities}."
+        )
+
+    def _enforce_streaming_request(self, *, stream_requested: bool) -> None:
+        if not stream_requested:
+            return
+        caps = self._get_provider_capabilities()
+        if caps is None or caps.supports_finalize_streaming:
+            return
+        if self.allow_stream_fallback and caps.allow_finalize_stream_fallback:
+            self._debug(
+                f"provider '{caps.provider}' has no native finalize_stream; using finalize fallback streaming."
+            )
+            return
+        raise ValueError(
+            f"Provider '{caps.provider}' does not support native finalize streaming. "
+            "Enable `allow_stream_fallback=True` to degrade safely."
+        )
 
     def _validate_mode(self, mode: str) -> str:
         normalized = mode.strip().lower()
@@ -829,6 +892,12 @@ class Agent:
     ) -> RunOutput:
         if max_rounds < 1:
             raise ValueError("max_rounds must be >= 1")
+        self._enforce_requested_input_modalities(
+            images=images,
+            audios=audios,
+            videos=videos,
+            files=files,
+        )
         if session_id:
             self._load_session_history(session_id=session_id, user_id=user_id)
         normalized_input = self._normalize_input(user_input)
@@ -1155,6 +1224,12 @@ class Agent:
     ) -> RunOutput:
         if max_rounds < 1:
             raise ValueError("max_rounds must be >= 1")
+        self._enforce_requested_input_modalities(
+            images=images,
+            audios=audios,
+            videos=videos,
+            files=files,
+        )
         if session_id:
             self._load_session_history(session_id=session_id, user_id=user_id)
         normalized_input = self._normalize_input(user_input)
@@ -1358,6 +1433,13 @@ class Agent:
     ) -> Iterator[str]:
         if max_rounds < 1:
             raise ValueError("max_rounds must be >= 1")
+        self._enforce_requested_input_modalities(
+            images=images,
+            audios=audios,
+            videos=videos,
+            files=files,
+        )
+        self._enforce_streaming_request(stream_requested=True)
         normalized_input = self._normalize_input(user_input)
         _ = self._validate_input_schema(normalized_input, input_schema)
         serialized_input = self._serialize_input_for_message(normalized_input)
@@ -1433,6 +1515,13 @@ class Agent:
     ) -> Iterator[dict[str, Any]]:
         if max_rounds < 1:
             raise ValueError("max_rounds must be >= 1")
+        self._enforce_requested_input_modalities(
+            images=images,
+            audios=audios,
+            videos=videos,
+            files=files,
+        )
+        self._enforce_streaming_request(stream_requested=stream_final)
         if session_id:
             self._load_session_history(session_id=session_id, user_id=user_id)
         normalized_input = self._normalize_input(user_input)
@@ -1719,6 +1808,13 @@ class Agent:
     ) -> AsyncIterator[dict[str, Any]]:
         if max_rounds < 1:
             raise ValueError("max_rounds must be >= 1")
+        self._enforce_requested_input_modalities(
+            images=images,
+            audios=audios,
+            videos=videos,
+            files=files,
+        )
+        self._enforce_streaming_request(stream_requested=stream_final)
         if session_id:
             self._load_session_history(session_id=session_id, user_id=user_id)
         normalized_input = self._normalize_input(user_input)

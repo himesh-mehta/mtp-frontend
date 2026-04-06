@@ -6,6 +6,32 @@ MTP supports both:
 
 Both styles are equivalent.
 
+## Capability contract (enforceable)
+
+Each provider adapter exposes:
+
+```python
+def capabilities(self) -> ProviderCapabilities
+```
+
+`ProviderCapabilities` includes:
+- `supports_tool_calling`
+- `supports_parallel_tool_calls`
+- `input_modalities` (subset of `text`, `image`, `audio`, `video`, `file`)
+- `supports_tool_media_output`
+- `supports_finalize_streaming`
+- `usage_metrics_quality` (`none`, `basic`, `rich`)
+- `supports_reasoning_metadata`
+- `structured_output_support` (`none`, `client_validated`, `native_json_object`, `native_json_schema`)
+- `supports_native_async`
+- `allow_finalize_stream_fallback`
+
+Runtime guardrails in `Agent`/`MTPAgent` enforce this contract:
+- Unsupported requested input modality => fail fast with clear error.
+- Unsupported native finalize streaming => fail fast, unless fallback is explicitly allowed.
+
+This prevents providers from silently over-promising features in production.
+
 ## Built-in usage (alias style)
 
 ```python
@@ -71,6 +97,7 @@ agent = Agent.MTPAgent(provider=provider, tools=registry)
   - `Cerebras`, `DeepSeek`, `Mistral`, `Cohere`, `TogetherAI`, `FireworksAI`
 - Local deterministic planner provider is also available as `MockPlannerProvider` (class alias for `SimplePlannerProvider`).
 - Provider exports are dependency-optional: missing SDKs no longer block importing other providers.
+- Provider symbols are lazily loaded to avoid import-time circular dependencies.
 - Explicit class names remain fully supported and unchanged.
 - No provider is defaulted by core `Agent` / `MTPAgent`.
 - Different providers can expose different constructor parameters safely.
