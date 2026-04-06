@@ -98,6 +98,12 @@ Cross-provider configuration note:
   - `MySQLSessionStore`
 - Persists message history and run summaries keyed by `session_id`.
 
+11. `mtp.mcp`
+- Experimental MCP-compatible JSON-RPC adapter over `ToolRegistry`.
+- Handles JSON-RPC request validation, initialize lifecycle, and tool method mapping.
+- Current method scope: `ping`, `tools/list`, `tools/call`, `notifications/initialized`.
+- Provides optional request-level auth hooks.
+
 ## Module boundaries
 
 - `mtp.providers`:
@@ -124,6 +130,11 @@ Cross-provider configuration note:
   - Uses `MessageEnvelope` serialization
   - No business logic execution
 
+- `mtp.mcp`:
+  - Protocol adapter boundary only (JSON-RPC in/out)
+  - Delegates actual tool execution to `mtp.runtime`
+  - Does not replace core `Agent` loop
+
 ## Protocol direction
 
 Implemented:
@@ -140,12 +151,14 @@ Implemented:
 - Output model + parser model refinement pipeline.
 - Envelope transport primitives (stdio + HTTP).
 - Session persistence via JSON/PostgreSQL/MySQL stores.
+- Experimental MCP compatibility adapter around the existing runtime.
 
 Next steps:
 - JSON schema + versioned wire format for MTP messages.
 - Transport abstraction (stdio/http/ws).
 - Streaming result chunks for long-running tools.
 - Provider capability matrix and richer per-provider options.
+- Expanded MCP feature coverage (resources/prompts/progress/cancellation).
 
 See:
 - [Storage and Sessions](C:\Users\prajw\Downloads\MTP\docs\STORAGE.md)

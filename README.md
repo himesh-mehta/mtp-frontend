@@ -1,29 +1,37 @@
-# MTP Python
+# MTPX (Model Tool Protocol Extended)
 
-MTP is a protocol-first Python library for agent tool orchestration, built to support:
+[![PyPI version](https://badge.fury.io/py/mtpx.svg)](https://pypi.org/project/mtpx/)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
+MTPX is a protocol-first Python library for agent tool orchestration, built to support:
 - Lazy tool loading by toolkit/category.
 - Dependency-aware batch tool execution.
 - Policy-aware execution based on tool risk.
 - Multi-round model-tool-model loops.
-- Provider adapters (now including Groq).
+- Provider adapters (now including Groq, Gemini, OpenAi, Anthropic, Openrouter, etc.).
 - Transport primitives (stdio + HTTP envelope transport).
+- Experimental MCP JSON-RPC adapter over the same runtime core.
 
 ## Quickstart
 
 ## Install
 
-### From source (this repo)
+### From PyPI (recommended)
 
 ```bash
-python -m venv .venv
-.venv\Scripts\activate
-pip install -e .
+pip install mtpx
 ```
 
-### From PyPI (target usage)
+### From source (for development)
 
 ```bash
-pip install mtp
+git clone https://github.com/yourusername/MTP.git
+cd MTP
+python -m venv .venv
+.venv\Scripts\activate  # On Windows
+# source .venv/bin/activate  # On Linux/Mac
+pip install -e .
 ```
 
 ### Provider SDKs and dotenv (install separately)
@@ -108,21 +116,23 @@ my_store = MySQLSessionStore(
 ```bash
 python examples/quickstart.py
 python examples/groq_agent.py
+python examples/mcp_stdio_server.py
 ```
 
 ## Docs map
-- [Quickstart](C:\Users\prajw\Downloads\MTP\docs\QUICKSTART.md)
-- [Agent API Reference](C:\Users\prajw\Downloads\MTP\docs\AGENT_API.md)
-- [Storage and Sessions](C:\Users\prajw\Downloads\MTP\docs\STORAGE.md)
-- [Providers](C:\Users\prajw\Downloads\MTP\docs\PROVIDERS.md)
-- [Creating Tools](C:\Users\prajw\Downloads\MTP\docs\CREATING_TOOLS.md)
-- [Events Contract](C:\Users\prajw\Downloads\MTP\docs\EVENTS.md)
-- [Architecture](C:\Users\prajw\Downloads\MTP\docs\ARCHITECTURE.md)
-- [Protocol Spec](C:\Users\prajw\Downloads\MTP\docs\PROTOCOL_SPEC.md)
-- [Local Toolkits](C:\Users\prajw\Downloads\MTP\docs\LOCAL_TOOLKITS.md)
-- [Groq Integration](C:\Users\prajw\Downloads\MTP\docs\GROQ_INTEGRATION.md)
-- [Transport](C:\Users\prajw\Downloads\MTP\docs\TRANSPORT.md)
-- [Publishing](C:\Users\prajw\Downloads\MTP\docs\PUBLISHING.md)
+- [Quickstart](docs/QUICKSTART.md)
+- [Agent API Reference](docs/AGENT_API.md)
+- [Storage and Sessions](docs/STORAGE.md)
+- [Providers](docs/PROVIDERS.md)
+- [Creating Tools](docs/CREATING_TOOLS.md)
+- [Events Contract](docs/EVENTS.md)
+- [Architecture](docs/ARCHITECTURE.md)
+- [Protocol Spec](docs/PROTOCOL_SPEC.md)
+- [Local Toolkits](docs/LOCAL_TOOLKITS.md)
+- [Groq Integration](docs/GROQ_INTEGRATION.md)
+- [Transport](docs/TRANSPORT.md)
+- [MCP Interop Adapter](docs/MCP_INTEROP.md)
+- [Publishing](docs/PUBLISHING.md)
 
 ## Repository structure
 - `src/mtp/protocol.py`: Core protocol entities (`ToolSpec`, `ToolCall`, `ExecutionPlan`, etc.).
@@ -132,5 +142,6 @@ python examples/groq_agent.py
 - `src/mtp/agent.py`: Agent loop around provider + runtime.
 - `src/mtp/toolkits/`: Local toolkits (`calculator`, `file`, `python`, `shell`).
 - `src/mtp/transport/`: Envelope transport over stdio and HTTP.
+- `src/mtp/mcp.py`: MCP-compatible JSON-RPC adapter around `ToolRegistry`.
 - `src/mtp/providers/`: Provider adapters (`MockPlannerProvider` + OpenAI/Groq/OpenRouter/Gemini/Anthropic/SambaNova/Cerebras/DeepSeek/Mistral/Cohere/TogetherAI/FireworksAI).
 - `docs/`: documentation and implementation guides.
