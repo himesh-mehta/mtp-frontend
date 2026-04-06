@@ -3,6 +3,7 @@
 MTP now includes envelope transport primitives:
 - stdio transport
 - HTTP transport
+- MCP JSON-RPC stdio adapter (experimental, via `mtp.mcp`)
 
 Both use `MessageEnvelope` JSON serialization.
 
@@ -55,6 +56,7 @@ server.start()
 
 - This is intentionally minimal transport scaffolding for next-phase expansion.
 - Authentication, retries, and distributed tracing are planned.
+- MCP adapter documentation: [MCP Interop Adapter](C:\Users\prajw\Downloads\MTP\docs\MCP_INTEROP.md)
 
 Related:
 - [Storage and Sessions](C:\Users\prajw\Downloads\MTP\docs\STORAGE.md)
