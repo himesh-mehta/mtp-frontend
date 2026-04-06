@@ -11,7 +11,16 @@ from ..agent import AgentAction, ProviderAdapter
 from ..config import require_env
 from ..media import Audio, File, Image, Video
 from ..protocol import ExecutionPlan, ToolCall, ToolResult, ToolSpec
-from .common import calls_to_dependency_batches, extract_refs, extract_usage_metrics, normalize_refs, safe_load_arguments
+from .common import (
+    ProviderCapabilities,
+    STRUCTURED_OUTPUT_CLIENT_VALIDATED,
+    USAGE_METRICS_RICH,
+    calls_to_dependency_batches,
+    extract_refs,
+    extract_usage_metrics,
+    normalize_refs,
+    safe_load_arguments,
+)
 
 
 class GeminiToolCallingProvider(ProviderAdapter):
@@ -429,6 +438,21 @@ class GeminiToolCallingProvider(ProviderAdapter):
         self._last_finalize_usage = extract_usage_metrics(response) or None
         text = self._extract_response_text(response)
         return text or "Done."
+
+    def capabilities(self) -> ProviderCapabilities:
+        return ProviderCapabilities(
+            provider="gemini",
+            supports_tool_calling=True,
+            supports_parallel_tool_calls=False,
+            input_modalities=["text", "image", "audio", "video", "file"],
+            supports_tool_media_output=True,
+            supports_finalize_streaming=False,
+            usage_metrics_quality=USAGE_METRICS_RICH,
+            supports_reasoning_metadata=False,
+            structured_output_support=STRUCTURED_OUTPUT_CLIENT_VALIDATED,
+            supports_native_async=False,
+            allow_finalize_stream_fallback=True,
+        )
 
     async def anext_action(self, messages: list[dict[str, Any]], tools: list[ToolSpec]) -> AgentAction:
         return await asyncio.to_thread(self.next_action, messages, tools)
