@@ -231,6 +231,11 @@ class GroqToolCallingProvider(ProviderAdapter):
             serialized_tool_calls: list[dict[str, Any]] = []
             parsed_calls: list[tuple[int, str, str, dict[str, Any]]] = []
             id_by_index: dict[int, str] = {}
+            call_reasoning: str | None = None
+            if isinstance(reasoning, str) and reasoning.strip():
+                call_reasoning = reasoning.strip()
+            elif isinstance(message.content, str) and message.content.strip():
+                call_reasoning = message.content.strip()
 
             for idx, tc in enumerate(tool_calls):
                 fn_name = tc.function.name
@@ -247,6 +252,7 @@ class GroqToolCallingProvider(ProviderAdapter):
                         "id": call_id,
                         "type": "function",
                         "function": {"name": fn_name, "arguments": raw_args},
+                        "reasoning": call_reasoning,
                     }
                 )
 
@@ -259,6 +265,7 @@ class GroqToolCallingProvider(ProviderAdapter):
                         name=fn_name,
                         arguments=normalized_args,
                         depends_on=depends_on,
+                        reasoning=call_reasoning,
                     )
                 )
 

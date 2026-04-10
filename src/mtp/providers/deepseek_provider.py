@@ -162,6 +162,11 @@ class DeepSeekToolCallingProvider(ProviderAdapter):
             mtp_calls: list[ToolCall] = []
             id_by_index: dict[int, str] = {}
             serialized_tool_calls: list[dict[str, Any]] = []
+            call_reasoning: str | None = None
+            if isinstance(reasoning, str) and reasoning.strip():
+                call_reasoning = reasoning.strip()
+            elif isinstance(message.content, str) and message.content.strip():
+                call_reasoning = message.content.strip()
 
             for idx, tc in enumerate(tool_calls):
                 call_id = tc.id or f"call_{idx}"
@@ -175,6 +180,7 @@ class DeepSeekToolCallingProvider(ProviderAdapter):
                         name=tc.function.name,
                         arguments=normalized_args,
                         depends_on=depends_on,
+                        reasoning=call_reasoning,
                     )
                 )
                 serialized_tool_calls.append(
@@ -185,6 +191,7 @@ class DeepSeekToolCallingProvider(ProviderAdapter):
                             "name": tc.function.name,
                             "arguments": tc.function.arguments or "{}",
                         },
+                        "reasoning": call_reasoning,
                     }
                 )
 
