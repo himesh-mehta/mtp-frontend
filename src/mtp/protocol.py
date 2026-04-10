@@ -32,6 +32,7 @@ class ToolCall:
     name: str
     arguments: dict[str, Any] = field(default_factory=dict)
     depends_on: list[str] = field(default_factory=list)
+    reasoning: str | None = None
 
 
 @dataclass(slots=True)

@@ -743,6 +743,8 @@ def _ensure_openai_agent(state: TUIState) -> Agent.MTPAgent:
         strict_dependency_mode=True,
         autoresearch=state.autoresearch,
         research_instructions=state.research_instructions,
+        stream_tool_events=True,
+        stream_tool_results=False,
         session_store=state.session_store,
     )
     return state.agent
@@ -914,6 +916,7 @@ def _parse_codex_json_events(stdout_text: str, active_model: str | None) -> tupl
                 peak_request_tokens = max(peak_request_tokens or 0, request_tokens)
         _extract_rate_values(event, rate_fields)
         event_type = str(event.get("type", "")).strip().lower()
+        tool_name, tool_reasoning = _extract_codex_tool_signal(event, event_type)
         if event_type in {"response.output_text.delta", "response.output_text"}:
             delta = event.get("delta") or event.get("text") or ""
             if isinstance(delta, str) and delta:
@@ -924,13 +927,11 @@ def _parse_codex_json_events(stdout_text: str, active_model: str | None) -> tupl
             if isinstance(text, str) and text.strip():
                 final_text = text.strip()
             continue
-        if "tool" in event_type or "exec_command" in event_type:
-            name = event.get("name") or event.get("tool_name") or event_type
-            detail = event.get("summary") or event.get("command") or ""
-            if detail:
-                tool_events.append(f"{name}: {detail}")
+        if tool_name:
+            if tool_reasoning:
+                tool_events.append(f"{tool_name}: {tool_reasoning}")
             else:
-                tool_events.append(str(name))
+                tool_events.append(tool_name)
             continue
     if assistant_chunks:
         final_text = "".join(assistant_chunks).strip() or final_text
@@ -994,18 +995,17 @@ def _emit_codex_live_line(raw_line: str, emitted: dict[str, bool]) -> None:
     except json.JSONDecodeError:
         return
     event_type = str(event.get("type", "")).strip().lower()
+    tool_name, tool_reasoning = _extract_codex_tool_signal(event, event_type)
     if event_type in {"response.output_text.delta", "response.output_text"}:
         if not emitted.get("assistant_started"):
             emitted["assistant_started"] = True
             _emit_live_event("status", "assistant is drafting the response")
         return
-    if "tool" in event_type or "exec_command" in event_type:
-        name = str(event.get("name") or event.get("tool_name") or event_type)
-        detail = str(event.get("summary") or event.get("command") or "").strip()
-        if detail:
-            _emit_live_event("tool", f"{name}: {_shorten_text(detail, 180)}")
+    if tool_name:
+        if tool_reasoning:
+            _emit_live_event("tool", f"{tool_name}: {_shorten_text(tool_reasoning, 180)}")
         else:
-            _emit_live_event("tool", name)
+            _emit_live_event("tool", tool_name)
         return
     if event_type.endswith("started") or event_type in {"run_started", "round_started", "plan_received"}:
         round_id = event.get("round")
@@ -1017,6 +1017,70 @@ def _emit_codex_live_line(raw_line: str, emitted: dict[str, bool]) -> None:
     if event_type.endswith("failed") or event_type in {"error"}:
         detail = str(event.get("error") or event.get("message") or event_type)
         _emit_live_event("warn", _shorten_text(detail, 220))
+
+
+def _extract_codex_tool_signal(event: dict[str, Any], event_type: str) -> tuple[str | None, str | None]:
+    def _get_str(value: Any) -> str | None:
+        if isinstance(value, str):
+            text = value.strip()
+            return text or None
+        return None
+
+    def _from_item(item: dict[str, Any]) -> tuple[str | None, str | None]:
+        item_type = _get_str(item.get("type")) or _get_str(item.get("kind")) or ""
+        name = (
+            _get_str(item.get("name"))
+            or _get_str(item.get("tool_name"))
+            or _get_str(item.get("toolName"))
+            or _get_str(item.get("command"))
+        )
+        if not name and item_type in {"function_call", "tool_call", "exec_command", "shell_call"}:
+            name = item_type
+        if not name:
+            return None, None
+        reasoning = (
+            _get_str(item.get("reasoning"))
+            or _get_str(item.get("summary"))
+            or _get_str(item.get("thought"))
+            or _get_str(item.get("thinking"))
+            or _get_str(item.get("description"))
+            or _get_str(item.get("content"))
+            or _get_str(item.get("message"))
+        )
+        return name, reasoning
+
+    if "tool" in event_type or "exec_command" in event_type or "function_call" in event_type:
+        name = (
+            _get_str(event.get("name"))
+            or _get_str(event.get("tool_name"))
+            or _get_str(event.get("toolName"))
+            or _get_str(event.get("command"))
+            or event_type
+        )
+        reasoning = (
+            _get_str(event.get("reasoning"))
+            or _get_str(event.get("summary"))
+            or _get_str(event.get("thought"))
+            or _get_str(event.get("thinking"))
+            or _get_str(event.get("description"))
+            or _get_str(event.get("content"))
+            or _get_str(event.get("message"))
+        )
+        return name, reasoning
+
+    item = event.get("item")
+    if isinstance(item, dict):
+        name, reasoning = _from_item(item)
+        if name:
+            return name, reasoning
+
+    payload = event.get("payload")
+    if isinstance(payload, dict):
+        name, reasoning = _from_item(payload)
+        if name:
+            return name, reasoning
+
+    return None, None
 
 
 def _run_codex_prompt(state: TUIState, prompt: str) -> ChatResult:
@@ -1144,6 +1208,8 @@ def _run_openai_prompt(state: TUIState, prompt: str) -> ChatResult:
         stream_final=False,
         session_id=state.session_id,
         user_id=state.user_id,
+        stream_tool_events=True,
+        stream_tool_results=False,
     ):
         event_type = str(event.get("type", ""))
         if event_type == "run_started":
@@ -1178,12 +1244,19 @@ def _run_openai_prompt(state: TUIState, prompt: str) -> ChatResult:
         elif event_type == "tool_started":
             tool_name = str(event.get("tool_name") or "tool")
             call_id = str(event.get("call_id") or "")
+            reasoning = str(event.get("reasoning") or "").strip()
             if call_id:
                 tool_events.append(f"{tool_name} ({call_id})")
-                _emit_live_event("tool", f"started {tool_name} ({call_id})")
+                if reasoning:
+                    _emit_live_event("tool", f"started {tool_name} ({call_id}) reason: {_shorten_text(reasoning, 140)}")
+                else:
+                    _emit_live_event("tool", f"started {tool_name} ({call_id})")
             else:
                 tool_events.append(tool_name)
-                _emit_live_event("tool", f"started {tool_name}")
+                if reasoning:
+                    _emit_live_event("tool", f"started {tool_name} reason: {_shorten_text(reasoning, 140)}")
+                else:
+                    _emit_live_event("tool", f"started {tool_name}")
         elif event_type == "tool_finished":
             tool_name = str(event.get("tool_name") or "tool")
             if not bool(event.get("success", True)):
