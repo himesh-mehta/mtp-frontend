@@ -23,6 +23,8 @@ Agent(
     send_media_to_model: bool = True,
     enforce_provider_capabilities: bool = True,
     allow_stream_fallback: bool = True,
+    autoresearch: bool = False,
+    research_instructions: str | None = None,
     session_store: SessionStore | None = None,
     mode: str = "standalone",
     members: dict[str, Agent] | None = None,
@@ -43,6 +45,15 @@ Capability enforcement options:
 - `enforce_provider_capabilities=True` (default): fail fast when requested features are unsupported by the active provider.
 - `allow_stream_fallback=True` (default): if provider has no native `finalize_stream`, stream APIs degrade safely by chunking the `finalize()` output.
 - `send_media_to_model=True` (default): include media payloads in model messages (still subject to capability guardrails).
+
+Autoresearch options:
+- `autoresearch=False` (default): normal run-loop completion behavior.
+- `autoresearch=True`: persistent run behavior where direct assistant text does not end the run by itself; the model should terminate explicitly via `agent.terminate`, user cancellation, or round/budget limits.
+- `research_instructions`: additional system instruction text appended only when `autoresearch=True`.
+
+When `autoresearch=True`, MTP injects:
+- internal autoresearch system instructions
+- internal tool: `agent.terminate(reason: str, summary: str)`
 
 ## Runtime methods
 
@@ -117,6 +128,8 @@ Fields:
 - `output_validation_error`
 - `paused`
 - `pause_reason`
+- `terminated`
+- `termination_reason`
 
 ### Cancellation and continuation
 
@@ -143,6 +156,10 @@ Use `event_format="json"` for raw JSON lines.
 `debug_mode` controls event verbosity for `print_response(..., stream_events=True)`:
 - `False`: normal concise logs
 - `True`: detailed debug logs (plans, batches, tool lifecycle, payloads, top-level XML context sections, metrics blocks)
+
+In autoresearch mode:
+- direct assistant text chunks can appear as intermediate progress updates.
+- completion is expected via `agent.terminate` (emitted as `run_terminated` event before `run_completed`).
 
 ### Dynamic tool management
 

@@ -118,6 +118,30 @@ agent.print_response("Give me a short summary.", max_rounds=4, stream=True, stre
 agent.print_response("Give me a short summary.", max_rounds=4, stream=True, stream_events=True, event_format="json")
 ```
 
+### Autoresearch mode (persistent execution)
+
+`autoresearch=True` enables persistent run behavior. The model is expected to end only when it calls `agent.terminate(...)`, or when user/system limits stop the run.
+
+```python
+agent = Agent.MTPAgent(
+    provider=provider,
+    tools=tools,
+    autoresearch=True,
+    research_instructions=(
+        "Keep working until requirements are satisfied and verified. "
+        "Call agent.terminate with reason+summary only when complete."
+    ),
+    debug_mode=True,
+)
+
+agent.print_response(
+    "Compute the result and verify with tools. Terminate only after completion.",
+    max_rounds=12,
+    stream=True,
+    stream_events=True,
+)
+```
+
 ## Persist conversation sessions (JSON database)
 
 ```python
