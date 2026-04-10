@@ -149,6 +149,35 @@ Full schema:
 - [Events Contract](C:\Users\prajw\Downloads\MTP\docs\EVENTS.md)
 - [Agent API Reference](C:\Users\prajw\Downloads\MTP\docs\AGENT_API.md)
 
+## 4.1) Autoresearch mode (optional)
+
+Use autoresearch mode when you want persistent execution where the model should keep working until it explicitly terminates.
+
+```python
+agent = Agent.MTPAgent(
+    provider=provider,
+    tools=tools,
+    autoresearch=True,
+    research_instructions=(
+        "Stay in persistent work mode. Validate with tools and call agent.terminate "
+        "only after requirements are fully met."
+    ),
+    debug_mode=True,
+)
+
+agent.print_response(
+    "Finish the task completely and terminate only when done.",
+    max_rounds=12,
+    stream=True,
+    stream_events=True,
+)
+```
+
+Notes:
+- In autoresearch mode, direct assistant text is treated as intermediate progress (not immediate completion).
+- Completion is expected via internal tool `agent.terminate(reason, summary)`.
+- Event stream includes `run_terminated` before `run_completed` when the model terminates explicitly.
+
 ## 5) Next steps
 
 - Enable persistent sessions:

@@ -44,6 +44,8 @@ Every event includes:
   - `delegation_tool_names`
   - `system_instructions`
   - `user_instructions`
+  - `autoresearch`
+  - `research_instructions`
   - `orchestration_instructions`
   - `member_agents`: list of `{id, mode, delegation_tool, role, tools}`
 
@@ -104,6 +106,11 @@ Every event includes:
   - `final_text`
   - `rounds`
   - `total_tool_calls`
+
+- `run_terminated`
+  - `round`
+  - `reason`
+  - `tool_name`
 
 - `run_cancelled`
   - `round`
