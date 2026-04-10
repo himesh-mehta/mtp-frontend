@@ -48,6 +48,8 @@ Every event includes:
   - `research_instructions`
   - `orchestration_instructions`
   - `member_agents`: list of `{id, mode, delegation_tool, role, tools}`
+  - `stream_tool_events`
+  - `stream_tool_results`
 
 - `round_started`
   - `round`
@@ -87,6 +89,7 @@ Every event includes:
   - `tool_name`
   - `arguments`
   - `depends_on`
+  - `reasoning` (optional concise rationale summary)
 
 - `tool_finished`
   - `round`
@@ -95,8 +98,9 @@ Every event includes:
   - `success`
   - `cached`
   - `approval`
-  - `output`
-  - `error`
+  - `output` (present only when tool-result streaming is enabled)
+  - `error` (present only when tool-result streaming is enabled)
+  - `reasoning` (optional concise rationale summary)
 
 - `text_chunk`
   - `chunk`

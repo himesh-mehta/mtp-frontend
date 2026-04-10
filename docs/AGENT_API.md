@@ -25,6 +25,8 @@ Agent(
     allow_stream_fallback: bool = True,
     autoresearch: bool = False,
     research_instructions: str | None = None,
+    stream_tool_events: bool = True,
+    stream_tool_results: bool = True,
     session_store: SessionStore | None = None,
     mode: str = "standalone",
     members: dict[str, Agent] | None = None,
@@ -54,6 +56,11 @@ Autoresearch options:
 When `autoresearch=True`, MTP injects:
 - internal autoresearch system instructions
 - internal tool: `agent.terminate(reason: str, summary: str)`
+
+Tool-event streaming options:
+- `stream_tool_events=True` (default): include tool lifecycle events in `run_loop_events` / `run_events`.
+- `stream_tool_results=True` (default): include tool output/error payloads in `tool_finished` events.
+- If `stream_tool_events=False`, tool lifecycle events are suppressed regardless of `stream_tool_results`.
 
 ## Runtime methods
 
