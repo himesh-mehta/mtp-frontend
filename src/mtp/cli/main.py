@@ -11,6 +11,7 @@ from typing import Iterable
 from .doctor import run_doctor
 from .providers import get_provider, providers_as_rows
 from .scaffold import VALID_TEMPLATES, scaffold_project
+from .tui import run_tui
 
 
 @contextmanager
@@ -139,6 +140,10 @@ def _cmd_providers_list(_args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_tui(args: argparse.Namespace) -> int:
+    return int(run_tui(args))
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="mtp",
@@ -176,6 +181,29 @@ def build_parser() -> argparse.ArgumentParser:
     providers_sub = providers_cmd.add_subparsers(dest="providers_command", required=True)
     providers_list = providers_sub.add_parser("list", help="List known providers, SDK modules, and key env vars.")
     providers_list.set_defaults(handler=_cmd_providers_list)
+
+    tui_cmd = sub.add_parser("tui", help="Launch minimal interactive TUI for MTP + Codex bridge.")
+    tui_cmd.add_argument(
+        "--backend",
+        choices=["codex", "mtp-openai"],
+        default="codex",
+        help="Chat backend to use.",
+    )
+    tui_cmd.add_argument(
+        "--codex-model",
+        default=None,
+        help="Model for Codex backend. Omit to use Codex CLI default (recommended for ChatGPT-login sessions).",
+    )
+    tui_cmd.add_argument("--openai-model", default="gpt-4o", help="Model for mtp-openai backend.")
+    tui_cmd.add_argument("--max-rounds", type=int, default=6, help="max_rounds for mtp-openai backend.")
+    tui_cmd.add_argument("--cwd", default=".", help="Working directory used by tools and Codex backend.")
+    tui_cmd.add_argument("--autoresearch", action="store_true", help="Enable autoresearch for mtp-openai backend.")
+    tui_cmd.add_argument(
+        "--research-instructions",
+        default=None,
+        help="Custom research instructions for mtp-openai backend when autoresearch is enabled.",
+    )
+    tui_cmd.set_defaults(handler=_cmd_tui)
 
     return parser
 

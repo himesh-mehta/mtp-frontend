@@ -76,3 +76,40 @@ Output columns:
 - SDK module and install status
 - API key env var
 
+## `mtp tui`
+
+Launch the minimal interactive terminal UI.
+
+```bash
+mtp tui
+```
+
+Recommended launch command:
+- `mtp tui` (single top-level command, consistent with existing CLI)
+
+Backends:
+- `codex`: bridges to official Codex CLI (`codex exec`) and uses your Codex login session.
+- `mtp-openai`: uses MTP SDK with `OpenAI` provider and local toolkits.
+
+Examples:
+
+```bash
+# Default backend is codex
+mtp tui
+
+# Start directly in MTP OpenAI backend
+mtp tui --backend mtp-openai --openai-model gpt-4o
+
+# Enable autoresearch in MTP OpenAI backend
+mtp tui --backend mtp-openai --autoresearch --research-instructions "Verify completion before terminating."
+```
+
+Inside TUI:
+- `/backend codex|mtp-openai`
+- `/model <name>`
+- `/rounds <n>`
+- `/codex-login`
+- `/autoresearch on|off`
+- `/research <text>`
+- `/status`
+- `/exit`
