@@ -23,7 +23,7 @@ from .runtime import (
     ToolStopError,
 )
 from .tools import tool_spec_from_callable
-from .protocol import ExecutionPlan, ToolResult, ToolSpec
+from .protocol import ExecutionPlan, ToolCall, ToolResult, ToolSpec
 from .schema import ToolArgumentsValidationError, validate_tool_arguments
 from .strict import validate_strict_dependencies
 
@@ -110,6 +110,8 @@ class Agent:
         allow_stream_fallback: bool = True,
         autoresearch: bool = False,
         research_instructions: str | None = None,
+        stream_tool_events: bool = True,
+        stream_tool_results: bool = True,
         mode: str = "standalone",
         members: dict[str, "Agent"] | None = None,
         session_store: SessionStore | None = None,
@@ -136,6 +138,8 @@ class Agent:
         self.allow_stream_fallback = allow_stream_fallback
         self.autoresearch = autoresearch
         self.research_instructions = research_instructions
+        self.stream_tool_events = bool(stream_tool_events)
+        self.stream_tool_results = bool(stream_tool_results)
         self.mode = self._validate_mode(mode)
         self.members: dict[str, Agent] = {}
         self.session_store = session_store
@@ -438,6 +442,39 @@ class Agent:
         if len(text) <= self.debug_max_chars:
             return text
         return text[: self.debug_max_chars] + "...<truncated>"
+
+    def _resolve_stream_tool_events(self, override: bool | None) -> bool:
+        if override is None:
+            return self.stream_tool_events
+        return bool(override)
+
+    def _resolve_stream_tool_results(self, override: bool | None) -> bool:
+        if override is None:
+            return self.stream_tool_results
+        return bool(override)
+
+    def _reasoning_for_tool_call(self, call: ToolCall, assistant_tool_message: dict[str, Any] | None) -> str | None:
+        if isinstance(call.reasoning, str) and call.reasoning.strip():
+            return call.reasoning.strip()
+        if not isinstance(assistant_tool_message, dict):
+            return None
+        tool_calls = assistant_tool_message.get("tool_calls")
+        if isinstance(tool_calls, list):
+            for item in tool_calls:
+                if not isinstance(item, dict):
+                    continue
+                if str(item.get("id") or "") != call.id:
+                    continue
+                item_reasoning = item.get("reasoning")
+                if isinstance(item_reasoning, str) and item_reasoning.strip():
+                    return item_reasoning.strip()
+        message_reasoning = assistant_tool_message.get("reasoning")
+        if isinstance(message_reasoning, str) and message_reasoning.strip():
+            return message_reasoning.strip()
+        content = assistant_tool_message.get("content")
+        if isinstance(content, str) and content.strip():
+            return content.strip()
+        return None
 
     def _parse_and_validate_output(
         self,
@@ -1645,6 +1682,8 @@ class Agent:
         metadata: dict[str, Any] | None = None,
         tool_call_limit: int | None = None,
         input_schema: dict[str, Any] | None = None,
+        stream_tool_events: bool | None = None,
+        stream_tool_results: bool | None = None,
     ) -> Iterator[dict[str, Any]]:
         max_rounds = self._resolve_max_rounds(max_rounds)
         if max_rounds < 1:
@@ -1666,6 +1705,8 @@ class Agent:
         resolved_run_id = run_id or str(uuid4())
         self._register_run(resolved_run_id)
         events = EventStreamContext(run_id=resolved_run_id)
+        emit_tool_events = self._resolve_stream_tool_events(stream_tool_events)
+        emit_tool_results = self._resolve_stream_tool_results(stream_tool_results)
         self._sync_autoresearch_state()
         self._seed_system_messages_if_needed()
         self._append_message(
@@ -1705,6 +1746,8 @@ class Agent:
             session_id=session_id,
             metadata=metadata or {},
             input_validation_error=input_validation_error,
+            stream_tool_events=emit_tool_events,
+            stream_tool_results=emit_tool_results if emit_tool_events else False,
         )
 
         last_results: list[ToolResult] = []
@@ -1812,26 +1855,29 @@ class Agent:
                 assistant_tool_message = action.metadata.get("assistant_tool_message")
                 if isinstance(assistant_tool_message, dict):
                     self._append_message(assistant_tool_message)
-                    yield events.emit("assistant_tool_message", round=round_idx, message=assistant_tool_message)
+                    if emit_tool_events:
+                        yield events.emit("assistant_tool_message", round=round_idx, message=assistant_tool_message)
 
-                for batch_idx, batch in enumerate(action.plan.batches, start=1):
-                    yield events.emit(
-                        "batch_started",
-                        round=round_idx,
-                        batch_index=batch_idx,
-                        mode=batch.mode,
-                        call_ids=[call.id for call in batch.calls],
-                    )
-                    for call in batch.calls:
+                if emit_tool_events:
+                    for batch_idx, batch in enumerate(action.plan.batches, start=1):
                         yield events.emit(
-                            "tool_started",
+                            "batch_started",
                             round=round_idx,
                             batch_index=batch_idx,
-                            call_id=call.id,
-                            tool_name=call.name,
-                            arguments=call.arguments,
-                            depends_on=call.depends_on,
+                            mode=batch.mode,
+                            call_ids=[call.id for call in batch.calls],
                         )
+                        for call in batch.calls:
+                            yield events.emit(
+                                "tool_started",
+                                round=round_idx,
+                                batch_index=batch_idx,
+                                call_id=call.id,
+                                tool_name=call.name,
+                                arguments=call.arguments,
+                                depends_on=call.depends_on,
+                                reasoning=self._reasoning_for_tool_call(call, assistant_tool_message),
+                            )
 
                 try:
                     last_results = self._run_coro_sync(
@@ -1875,24 +1921,36 @@ class Agent:
                     yield events.emit("run_paused", round=round_idx, reason=final_text, tool_name=exc.tool_name)
                     yield events.emit("run_completed", final_text=final_text, rounds=round_idx, total_tool_calls=total_tool_calls)
                     return
-                for result in last_results:
-                    yield events.emit(
-                        "tool_finished",
-                        round=round_idx,
-                        call_id=result.call_id,
-                        tool_name=result.tool_name,
-                        success=result.success,
-                        cached=result.cached,
-                        approval=result.approval,
-                        output=result.output if result.success else None,
-                        error=result.error if not result.success else None,
-                        media_counts={
-                            "images": len(result.images or []),
-                            "videos": len(result.videos or []),
-                            "audios": len(result.audios or []),
-                            "files": len(result.files or []),
-                        },
-                    )
+                if emit_tool_events:
+                    call_lookup: dict[str, ToolCall] = {
+                        call.id: call
+                        for batch in action.plan.batches
+                        for call in batch.calls
+                    }
+                    for result in last_results:
+                        associated_call = call_lookup.get(result.call_id)
+                        yield events.emit(
+                            "tool_finished",
+                            round=round_idx,
+                            call_id=result.call_id,
+                            tool_name=result.tool_name,
+                            success=result.success,
+                            cached=result.cached,
+                            approval=result.approval,
+                            output=(result.output if result.success and emit_tool_results else None),
+                            error=(result.error if (not result.success and emit_tool_results) else None),
+                            reasoning=(
+                                self._reasoning_for_tool_call(associated_call, assistant_tool_message)
+                                if associated_call is not None
+                                else None
+                            ),
+                            media_counts={
+                                "images": len(result.images or []),
+                                "videos": len(result.videos or []),
+                                "audios": len(result.audios or []),
+                                "files": len(result.files or []),
+                            },
+                        )
 
                 self._append_tool_messages_and_media(last_results)
 
@@ -1966,6 +2024,8 @@ class Agent:
         metadata: dict[str, Any] | None = None,
         tool_call_limit: int | None = None,
         input_schema: dict[str, Any] | None = None,
+        stream_tool_events: bool | None = None,
+        stream_tool_results: bool | None = None,
     ) -> AsyncIterator[dict[str, Any]]:
         max_rounds = self._resolve_max_rounds(max_rounds)
         if max_rounds < 1:
@@ -1987,6 +2047,8 @@ class Agent:
         resolved_run_id = run_id or str(uuid4())
         self._register_run(resolved_run_id)
         events = EventStreamContext(run_id=resolved_run_id)
+        emit_tool_events = self._resolve_stream_tool_events(stream_tool_events)
+        emit_tool_results = self._resolve_stream_tool_results(stream_tool_results)
         self._sync_autoresearch_state()
         self._seed_system_messages_if_needed()
         self._append_message(
@@ -2026,6 +2088,8 @@ class Agent:
             session_id=session_id,
             metadata=metadata or {},
             input_validation_error=input_validation_error,
+            stream_tool_events=emit_tool_events,
+            stream_tool_results=emit_tool_results if emit_tool_events else False,
         )
 
         last_results: list[ToolResult] = []
@@ -2133,26 +2197,29 @@ class Agent:
                 assistant_tool_message = action.metadata.get("assistant_tool_message")
                 if isinstance(assistant_tool_message, dict):
                     self._append_message(assistant_tool_message)
-                    yield events.emit("assistant_tool_message", round=round_idx, message=assistant_tool_message)
+                    if emit_tool_events:
+                        yield events.emit("assistant_tool_message", round=round_idx, message=assistant_tool_message)
 
-                for batch_idx, batch in enumerate(action.plan.batches, start=1):
-                    yield events.emit(
-                        "batch_started",
-                        round=round_idx,
-                        batch_index=batch_idx,
-                        mode=batch.mode,
-                        call_ids=[call.id for call in batch.calls],
-                    )
-                    for call in batch.calls:
+                if emit_tool_events:
+                    for batch_idx, batch in enumerate(action.plan.batches, start=1):
                         yield events.emit(
-                            "tool_started",
+                            "batch_started",
                             round=round_idx,
                             batch_index=batch_idx,
-                            call_id=call.id,
-                            tool_name=call.name,
-                            arguments=call.arguments,
-                            depends_on=call.depends_on,
+                            mode=batch.mode,
+                            call_ids=[call.id for call in batch.calls],
                         )
+                        for call in batch.calls:
+                            yield events.emit(
+                                "tool_started",
+                                round=round_idx,
+                                batch_index=batch_idx,
+                                call_id=call.id,
+                                tool_name=call.name,
+                                arguments=call.arguments,
+                                depends_on=call.depends_on,
+                                reasoning=self._reasoning_for_tool_call(call, assistant_tool_message),
+                            )
 
                 try:
                     last_results = await self.registry.execute_plan(
@@ -2194,24 +2261,36 @@ class Agent:
                     yield events.emit("run_paused", round=round_idx, reason=final_text, tool_name=exc.tool_name)
                     yield events.emit("run_completed", final_text=final_text, rounds=round_idx, total_tool_calls=total_tool_calls)
                     return
-                for result in last_results:
-                    yield events.emit(
-                        "tool_finished",
-                        round=round_idx,
-                        call_id=result.call_id,
-                        tool_name=result.tool_name,
-                        success=result.success,
-                        cached=result.cached,
-                        approval=result.approval,
-                        output=result.output if result.success else None,
-                        error=result.error if not result.success else None,
-                        media_counts={
-                            "images": len(result.images or []),
-                            "videos": len(result.videos or []),
-                            "audios": len(result.audios or []),
-                            "files": len(result.files or []),
-                        },
-                    )
+                if emit_tool_events:
+                    call_lookup: dict[str, ToolCall] = {
+                        call.id: call
+                        for batch in action.plan.batches
+                        for call in batch.calls
+                    }
+                    for result in last_results:
+                        associated_call = call_lookup.get(result.call_id)
+                        yield events.emit(
+                            "tool_finished",
+                            round=round_idx,
+                            call_id=result.call_id,
+                            tool_name=result.tool_name,
+                            success=result.success,
+                            cached=result.cached,
+                            approval=result.approval,
+                            output=(result.output if result.success and emit_tool_results else None),
+                            error=(result.error if (not result.success and emit_tool_results) else None),
+                            reasoning=(
+                                self._reasoning_for_tool_call(associated_call, assistant_tool_message)
+                                if associated_call is not None
+                                else None
+                            ),
+                            media_counts={
+                                "images": len(result.images or []),
+                                "videos": len(result.videos or []),
+                                "audios": len(result.audios or []),
+                                "files": len(result.files or []),
+                            },
+                        )
 
                 self._append_tool_messages_and_media(last_results)
 

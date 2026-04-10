@@ -50,6 +50,8 @@ def main() -> None:
             "and call agent.terminate only after you have finished the task."
         ),
         debug_mode=True,
+        stream_tool_events=True,
+        stream_tool_results=False,
         strict_dependency_mode=True,
     )
 
