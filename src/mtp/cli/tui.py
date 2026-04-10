@@ -2,11 +2,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+import os
 from pathlib import Path
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
+import threading
+import time
 from typing import Any
 
 from mtp import Agent
@@ -47,6 +51,198 @@ _REASONING_NOTES = {
 }
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# ANSI / Styling Helpers (zero-dependency)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _setup_console() -> None:
+    """Configure the console for UTF-8 and ANSI support on Windows."""
+    if sys.platform == "win32":
+        # Set console output code page to UTF-8
+        try:
+            import ctypes
+            kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+            # SetConsoleOutputCP(65001)  — UTF-8
+            kernel32.SetConsoleOutputCP(65001)
+            # STD_OUTPUT_HANDLE = -11
+            handle = kernel32.GetStdHandle(-11)
+            mode = ctypes.c_ulong()
+            kernel32.GetConsoleMode(handle, ctypes.byref(mode))
+            # ENABLE_VIRTUAL_TERMINAL_PROCESSING = 0x0004
+            kernel32.SetConsoleMode(handle, mode.value | 0x0004)
+        except Exception:
+            pass
+        # Reconfigure stdout to UTF-8
+        try:
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[attr-defined]
+        except Exception:
+            pass
+
+
+_setup_console()
+
+
+def _supports_unicode() -> bool:
+    """Detect whether the terminal can render Unicode box-drawing characters."""
+    try:
+        encoding = (sys.stdout.encoding or "").lower()
+        return encoding in {"utf-8", "utf8", "utf_8"}
+    except Exception:
+        return False
+
+
+_UNICODE_ENABLED = _supports_unicode()
+
+
+def _supports_color() -> bool:
+    """Detect whether the terminal supports ANSI colors."""
+    if os.environ.get("NO_COLOR"):
+        return False
+    if os.environ.get("FORCE_COLOR"):
+        return True
+    if sys.platform == "win32":
+        return True
+    return hasattr(sys.stdout, "isatty") and sys.stdout.isatty()
+
+
+_COLOR_ENABLED = _supports_color()
+
+
+def _sgr(code: str) -> str:
+    """Return an ANSI SGR escape if color is enabled, else empty string."""
+    return f"\033[{code}m" if _COLOR_ENABLED else ""
+
+
+# ── Core colors ──────────────────────────────────────────────────────────────
+
+RESET       = _sgr("0")
+BOLD        = _sgr("1")
+DIM         = _sgr("2")
+ITALIC      = _sgr("3")
+UNDERLINE   = _sgr("4")
+
+# 256-color / truecolor helpers
+def _fg256(n: int) -> str:
+    return _sgr(f"38;5;{n}")
+
+def _bg256(n: int) -> str:
+    return _sgr(f"48;5;{n}")
+
+def _fg_rgb(r: int, g: int, b: int) -> str:
+    return _sgr(f"38;2;{r};{g};{b}")
+
+def _bg_rgb(r: int, g: int, b: int) -> str:
+    return _sgr(f"48;2;{r};{g};{b}")
+
+
+# ── Semantic palette ─────────────────────────────────────────────────────────
+# A rich purple/violet → cyan gradient feel, modern dark-terminal aesthetic.
+
+C_BRAND         = _fg_rgb(167, 139, 250)   # Soft violet  — primary brand
+C_BRAND_BOLD    = BOLD + _fg_rgb(167, 139, 250)
+C_ACCENT        = _fg_rgb(99, 220, 255)    # Electric cyan — accent
+C_ACCENT_DIM    = _fg_rgb(70, 160, 190)    # Muted cyan
+C_SUCCESS       = _fg_rgb(52, 211, 153)    # Mint green   — success/active
+C_WARNING       = _fg_rgb(251, 191, 36)    # Amber        — warnings
+C_ERROR         = _fg_rgb(248, 113, 113)   # Soft red     — errors
+C_DIM           = _fg_rgb(100, 100, 120)   # Muted grey   — secondary text
+C_TEXT          = _fg_rgb(220, 220, 230)    # Off-white    — body text
+C_LABEL         = _fg_rgb(180, 170, 220)   # Lavender     — labels
+C_HIGHLIGHT     = BOLD + _fg_rgb(255, 255, 255)  # Bright white
+C_MODEL         = _fg_rgb(250, 204, 21)    # Gold         — model names
+C_CMD           = _fg_rgb(129, 140, 248)   # Indigo       — commands
+C_KEY           = _fg_rgb(192, 132, 252)   # Purple       — keyboard shortcuts
+C_VALUE         = _fg_rgb(110, 231, 183)   # Seafoam      — values
+C_BORDER        = _fg_rgb(75, 75, 100)     # Dark border
+C_PROMPT_ARROW  = _fg_rgb(167, 139, 250)   # Brand violet for prompt
+C_RESPONSE      = _fg_rgb(196, 181, 253)   # Light violet for assistant label
+
+
+# ── Drawing primitives ───────────────────────────────────────────────────────
+
+def _get_term_width() -> int:
+    try:
+        return os.get_terminal_size().columns
+    except (ValueError, OSError):
+        return 80
+
+
+def _hrule(char: str = "─", color: str = C_BORDER) -> str:
+    w = _get_term_width()
+    return f"{color}{char * w}{RESET}"
+
+
+def _centered(text: str, width: int | None = None, pad_char: str = " ") -> str:
+    """Center raw text (strips ANSI for width calc)."""
+    w = width or _get_term_width()
+    visible = _strip_ansi(text)
+    padding = max(0, (w - len(visible)) // 2)
+    return pad_char * padding + text
+
+
+def _strip_ansi(s: str) -> str:
+    return re.sub(r"\033\[[0-9;]*m", "", s)
+
+
+def _box_line(content: str, width: int | None = None) -> str:
+    """Render a line inside a box with │ borders."""
+    w = (width or _get_term_width()) - 4  # account for "│ " + " │"
+    visible_len = len(_strip_ansi(content))
+    pad = max(0, w - visible_len)
+    return f"{C_BORDER}│{RESET} {content}{' ' * pad} {C_BORDER}│{RESET}"
+
+
+def _box_top(width: int | None = None) -> str:
+    w = (width or _get_term_width()) - 2
+    return f"{C_BORDER}╭{'─' * w}╮{RESET}"
+
+
+def _box_bottom(width: int | None = None) -> str:
+    w = (width or _get_term_width()) - 2
+    return f"{C_BORDER}╰{'─' * w}╯{RESET}"
+
+
+def _box_separator(width: int | None = None) -> str:
+    w = (width or _get_term_width()) - 2
+    return f"{C_BORDER}├{'─' * w}┤{RESET}"
+
+
+# ── ASCII Art Logo ───────────────────────────────────────────────────────────
+
+_LOGO_LINES = [
+    r"  ███╗   ███╗ ████████╗ ██████╗  ",
+    r"  ████╗ ████║ ╚══██╔══╝ ██╔══██╗ ",
+    r"  ██╔████╔██║    ██║    ██████╔╝ ",
+    r"  ██║╚██╔╝██║    ██║    ██╔═══╝  ",
+    r"  ██║ ╚═╝ ██║    ██║    ██║      ",
+    r"  ╚═╝     ╚═╝    ╚═╝    ╚═╝      ",
+]
+
+# Gradient colors for the logo: purple → cyan → mint
+_LOGO_GRADIENT = [
+    (167, 139, 250),  # violet
+    (149, 150, 252),  # blue-violet
+    (129, 170, 248),  # periwinkle
+    (110, 190, 244),  # sky
+    (90,  210, 235),  # cyan
+    (70,  225, 200),  # mint
+]
+
+
+def _render_logo() -> list[str]:
+    """Render the ASCII logo with a vertical gradient."""
+    lines = []
+    for idx, raw_line in enumerate(_LOGO_LINES):
+        r, g, b = _LOGO_GRADIENT[idx % len(_LOGO_GRADIENT)]
+        colored = f"{BOLD}{_fg_rgb(r, g, b)}{raw_line}{RESET}"
+        lines.append(_centered(colored))
+    return lines
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Data classes
+# ─────────────────────────────────────────────────────────────────────────────
+
 @dataclass
 class ChatResult:
     text: str
@@ -69,60 +265,234 @@ class TUIState:
     codex_bin: str | None = None
 
 
-def _print_banner(state: TUIState) -> None:
-    active_model = state.codex_model if state.backend == "codex" else state.openai_model
-    print("=" * 72)
-    print("MTP TUI")
-    print("Interactive terminal UI for MTP SDK + Codex CLI bridge")
-    print("=" * 72)
-    print(
-        "Models: [1] GPT-5.4  [2] GPT-5.4-mini  [3] GPT-5.3-codex  [4] GPT-5.2"
-    )
-    print("Reasoning: [0] none  [1] low  [2] medium  [3] high  [4] xhigh")
-    print("Commands: /help /backend /model /reasoning /rounds /status /exit")
-    print("Extra: /models /codex-login /autoresearch on|off /research <text> /cd <dir>")
-    print("Tip: leading '/' is optional for commands (for example `codex-login` also works).")
-    print(
-        f"Current backend: {state.backend} | model: {active_model or '(codex-default)'} | reasoning: {state.reasoning_effort}"
-    )
-    print(f"cwd: {state.cwd}")
-    print("Tip: include @relative/path.py in your prompt to attach file contents.")
-    print("-" * 72)
+# ─────────────────────────────────────────────────────────────────────────────
+# Banner / Welcome Screen
+# ─────────────────────────────────────────────────────────────────────────────
 
+def _print_banner(state: TUIState) -> None:
+    from mtp import __version__
+    active_model = state.codex_model if state.backend == "codex" else state.openai_model
+    w = _get_term_width()
+
+    print()
+    # Top border
+    print(_box_top(w))
+
+    # Empty padding line
+    print(_box_line("", w))
+
+    # Render logo
+    for logo_line in _render_logo():
+        # Re-center inside box
+        visible = _strip_ansi(logo_line).strip()
+        inner_w = w - 4
+        pad = max(0, (inner_w - len(visible)) // 2)
+        # Rebuild with color
+        idx = _render_logo().index(logo_line) if False else 0
+        print(_box_line(" " * pad + logo_line.strip(), w))
+
+    # Tagline
+    print(_box_line("", w))
+    tagline = f"{C_DIM}Model Tool Protocol{RESET}  {C_BRAND_BOLD}v{__version__}{RESET}"
+    tagline_vis = _strip_ansi(tagline)
+    tag_pad = max(0, (w - 4 - len(tagline_vis)) // 2)
+    print(_box_line(" " * tag_pad + tagline, w))
+    subtitle = f"{C_DIM}Interactive terminal UI · SDK + Codex CLI bridge{RESET}"
+    sub_vis = _strip_ansi(subtitle)
+    sub_pad = max(0, (w - 4 - len(sub_vis)) // 2)
+    print(_box_line(" " * sub_pad + subtitle, w))
+    print(_box_line("", w))
+
+    # Separator
+    print(_box_separator(w))
+    print(_box_line("", w))
+
+    # Models section
+    model_header = f"  {C_LABEL}{'Models'}{RESET}"
+    print(_box_line(model_header, w))
+    for idx, (model, desc) in enumerate(_MODEL_PRESETS, start=1):
+        selected = model in {state.codex_model, state.openai_model}
+        marker = f" {C_SUCCESS}●{RESET}" if selected else f" {C_DIM}○{RESET}"
+        shortcut = f"{C_KEY}[{idx}]{RESET}"
+        model_name = f"{C_MODEL}{model}{RESET}"
+        description = f"{C_DIM}{desc}{RESET}"
+        print(_box_line(f"  {marker} {shortcut} {model_name}  {description}", w))
+    print(_box_line("", w))
+
+    # Reasoning section
+    reasoning_header = f"  {C_LABEL}{'Reasoning'}{RESET}"
+    print(_box_line(reasoning_header, w))
+    reasoning_items = []
+    for num, name in _REASONING_SHORTCUTS.items():
+        if name == state.reasoning_effort:
+            reasoning_items.append(f"{C_KEY}[{num}]{RESET} {C_SUCCESS}{name}{RESET}")
+        else:
+            reasoning_items.append(f"{C_KEY}[{num}]{RESET} {C_DIM}{name}{RESET}")
+    print(_box_line(f"    {'  '.join(reasoning_items)}", w))
+    print(_box_line("", w))
+
+    # Separator
+    print(_box_separator(w))
+    print(_box_line("", w))
+
+    # Quick Commands section
+    cmd_header = f"  {C_LABEL}{'Commands'}{RESET}"
+    print(_box_line(cmd_header, w))
+    cmds = [
+        (f"{C_CMD}/help{RESET}", "Show full command reference"),
+        (f"{C_CMD}/model{RESET}", "Switch model"),
+        (f"{C_CMD}/backend{RESET}", "Switch backend"),
+        (f"{C_CMD}/reasoning{RESET}", "Set reasoning effort"),
+        (f"{C_CMD}/status{RESET}", "Show session info"),
+        (f"{C_CMD}/exit{RESET}", "Exit TUI"),
+    ]
+    # Render in 2 columns
+    half = (len(cmds) + 1) // 2
+    for i in range(half):
+        left = cmds[i]
+        right = cmds[i + half] if i + half < len(cmds) else ("", "")
+        left_str = f"    {left[0]}  {C_DIM}{left[1]}{RESET}"
+        right_str = f"    {right[0]}  {C_DIM}{right[1]}{RESET}" if right[0] else ""
+        # We need careful padding for columns
+        left_vis = len(_strip_ansi(left_str))
+        col_w = (w - 4) // 2
+        pad = max(0, col_w - left_vis)
+        print(_box_line(f"{left_str}{' ' * pad}{right_str}", w))
+    print(_box_line("", w))
+
+    # Separator
+    print(_box_separator(w))
+    print(_box_line("", w))
+
+    # Current session info
+    session_header = f"  {C_LABEL}{'Session'}{RESET}"
+    print(_box_line(session_header, w))
+    backend_val = f"{C_SUCCESS}{state.backend}{RESET}" if state.backend == "codex" else f"{C_ACCENT}{state.backend}{RESET}"
+    model_val = f"{C_MODEL}{active_model or '(codex-default)'}{RESET}"
+    reasoning_val = f"{C_VALUE}{state.reasoning_effort}{RESET}"
+    cwd_val = f"{C_TEXT}{state.cwd}{RESET}"
+
+    print(_box_line(f"    {C_DIM}backend{RESET}     {backend_val}", w))
+    print(_box_line(f"    {C_DIM}model{RESET}       {model_val}", w))
+    print(_box_line(f"    {C_DIM}reasoning{RESET}   {reasoning_val}", w))
+    print(_box_line(f"    {C_DIM}cwd{RESET}         {cwd_val}", w))
+    print(_box_line("", w))
+
+    # Tips
+    print(_box_separator(w))
+    print(_box_line("", w))
+    tip_icon = f"{C_WARNING}💡{RESET}"
+    print(_box_line(f"  {tip_icon} {C_DIM}Include{RESET} {C_ACCENT}@relative/path.py{RESET} {C_DIM}in your prompt to attach file contents.{RESET}", w))
+    print(_box_line(f"  {tip_icon} {C_DIM}Leading{RESET} {C_CMD}/{RESET} {C_DIM}is optional for commands (e.g.{RESET} {C_CMD}codex-login{RESET} {C_DIM}works too).{RESET}", w))
+    print(_box_line("", w))
+
+    # Bottom border
+    print(_box_bottom(w))
+    print()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Help Display
+# ─────────────────────────────────────────────────────────────────────────────
 
 def _print_help() -> None:
-    print("Available commands:")
-    print("  /help                         Show command help")
-    print("  /exit                         Exit TUI")
-    print("  /status                       Show current TUI/session state")
-    print("  /backend codex|mtp-openai     Switch backend")
-    print("  /models                       Show model + reasoning presets")
-    print("  /model <name|1..4|default>    Set model for active backend")
-    print("  /reasoning <none|low|...>     Set reasoning effort for codex backend")
-    print("  /rounds <n>                   Set max_rounds for mtp-openai backend")
-    print("  /autoresearch on|off          Toggle autoresearch for mtp-openai backend")
-    print("  /research <text>              Set research_instructions for mtp-openai backend")
-    print("  /codex-login                  Run official `codex login`")
-    print("  /cd <dir>                     Change working directory for both backends")
-    print("Prompt UX:")
-    print("  Type @path/to/file.py in a prompt to attach file context to the request.")
-    print("  Example: explain bug in @src/mtp/cli/tui.py and propose patch")
+    w = _get_term_width()
+    print()
+    print(_box_top(w))
+    print(_box_line(f"  {C_BRAND_BOLD}Command Reference{RESET}", w))
+    print(_box_separator(w))
 
+    sections = [
+        ("Navigation", [
+            ("/help", "Show this command reference"),
+            ("/exit", "Exit TUI"),
+            ("/status", "Show current session state"),
+            ("/cd <dir>", "Change working directory"),
+        ]),
+        ("Backend & Model", [
+            ("/backend codex|mtp-openai", "Switch active backend"),
+            ("/models", "Show model + reasoning presets"),
+            ("/model <name|1..4|default>", "Set model for active backend"),
+            ("/reasoning <none|low|...|xhigh>", "Set reasoning effort (codex)"),
+            ("/rounds <n>", "Set max_rounds (mtp-openai)"),
+        ]),
+        ("Research & Auth", [
+            ("/autoresearch on|off", "Toggle autoresearch (mtp-openai)"),
+            ("/research <text>", "Set research instructions"),
+            ("/codex-login", "Run official codex login flow"),
+        ]),
+    ]
+
+    for section_name, commands in sections:
+        print(_box_line("", w))
+        print(_box_line(f"  {C_LABEL}{section_name}{RESET}", w))
+        for cmd, desc in commands:
+            cmd_str = f"{C_CMD}{cmd}{RESET}"
+            cmd_vis = len(_strip_ansi(cmd_str))
+            pad = max(1, 36 - cmd_vis)
+            print(_box_line(f"    {cmd_str}{' ' * pad}{C_DIM}{desc}{RESET}", w))
+
+    print(_box_line("", w))
+    print(_box_separator(w))
+    print(_box_line("", w))
+    print(_box_line(f"  {C_LABEL}Prompt UX{RESET}", w))
+    print(_box_line(f"    {C_DIM}Type{RESET} {C_ACCENT}@path/to/file.py{RESET} {C_DIM}in a prompt to attach file context.{RESET}", w))
+    print(_box_line(f"    {C_DIM}Example:{RESET} {C_TEXT}explain bug in @src/mtp/cli/tui.py and propose patch{RESET}", w))
+    print(_box_line("", w))
+    print(_box_bottom(w))
+    print()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Model Matrix Display
+# ─────────────────────────────────────────────────────────────────────────────
 
 def _print_model_matrix(state: TUIState) -> None:
-    print("Model presets:")
-    for idx, (model, note) in enumerate(_MODEL_PRESETS, start=1):
-        marker = " (selected)" if model in {state.codex_model, state.openai_model} else ""
-        print(f"  {idx}. {model}{marker} - {note}")
-    print("Reasoning presets:")
-    print("  0. none  1. low  2. medium  3. high  4. xhigh")
-    print("Model-specific notes (from current OpenAI docs):")
-    print(f"  gpt-5.4 -> {_REASONING_NOTES['gpt-5.4']}")
-    print(f"  gpt-5.3-codex -> {_REASONING_NOTES['gpt-5.3-codex']}")
-    print(
-        "Use `/model 3` and `/reasoning high`, or `/model gpt-5.4-mini`."
-    )
+    w = _get_term_width()
+    print()
+    print(_box_top(w))
+    print(_box_line(f"  {C_BRAND_BOLD}Model Presets{RESET}", w))
+    print(_box_separator(w))
+    print(_box_line("", w))
 
+    for idx, (model, note) in enumerate(_MODEL_PRESETS, start=1):
+        selected = model in {state.codex_model, state.openai_model}
+        marker = f"{C_SUCCESS}●{RESET}" if selected else f"{C_DIM}○{RESET}"
+        shortcut = f"{C_KEY}[{idx}]{RESET}"
+        model_name = f"{C_MODEL}{model}{RESET}"
+        desc = f"{C_DIM}{note}{RESET}"
+        sel_tag = f"  {C_SUCCESS}← active{RESET}" if selected else ""
+        print(_box_line(f"    {marker} {shortcut} {model_name}  {desc}{sel_tag}", w))
+
+    print(_box_line("", w))
+    print(_box_separator(w))
+    print(_box_line("", w))
+
+    print(_box_line(f"  {C_LABEL}Reasoning Levels{RESET}", w))
+    reasoning_items = []
+    for num, name in _REASONING_SHORTCUTS.items():
+        if name == state.reasoning_effort:
+            reasoning_items.append(f"{C_KEY}[{num}]{RESET} {C_SUCCESS}{name}{RESET}")
+        else:
+            reasoning_items.append(f"{C_KEY}[{num}]{RESET} {C_DIM}{name}{RESET}")
+    print(_box_line(f"      {'   '.join(reasoning_items)}", w))
+
+    print(_box_line("", w))
+    print(_box_separator(w))
+    print(_box_line("", w))
+    print(_box_line(f"  {C_LABEL}Model-Specific Notes{RESET}", w))
+    for model_key, notes in _REASONING_NOTES.items():
+        print(_box_line(f"    {C_MODEL}{model_key}{RESET} {C_DIM}→{RESET} {C_VALUE}{notes}{RESET}", w))
+    print(_box_line("", w))
+    print(_box_line(f"  {C_DIM}Usage:{RESET} {C_CMD}/model 3{RESET} {C_DIM}and{RESET} {C_CMD}/reasoning high{RESET}  {C_DIM}or{RESET}  {C_CMD}/model gpt-5.4-mini{RESET}", w))
+    print(_box_line("", w))
+    print(_box_bottom(w))
+    print()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Codex detection + plumbing (unchanged logic)
+# ─────────────────────────────────────────────────────────────────────────────
 
 def _detect_codex_bin() -> str | None:
     for candidate in ("codex.cmd", "codex"):
@@ -276,9 +646,13 @@ def _run_codex_login(state: TUIState) -> str:
         return "Codex CLI not found on PATH. Install: npm install -g @openai/codex"
     proc = subprocess.run([codex_bin, "login"], text=True)
     if proc.returncode == 0:
-        return "Codex login completed."
-    return f"Codex login exited with code {proc.returncode}."
+        return f"{C_SUCCESS}✓ Codex login completed.{RESET}"
+    return f"{C_ERROR}✗ Codex login exited with code {proc.returncode}.{RESET}"
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Status Display
+# ─────────────────────────────────────────────────────────────────────────────
 
 def _status_lines(state: TUIState) -> list[str]:
     return [
@@ -292,6 +666,36 @@ def _status_lines(state: TUIState) -> list[str]:
         f"reasoning_effort={state.reasoning_effort}",
     ]
 
+
+def _print_status(state: TUIState) -> None:
+    w = _get_term_width()
+    print()
+    print(_box_top(w))
+    print(_box_line(f"  {C_BRAND_BOLD}Session Status{RESET}", w))
+    print(_box_separator(w))
+    print(_box_line("", w))
+
+    fields = [
+        ("backend", state.backend, C_SUCCESS),
+        ("cwd", str(state.cwd), C_TEXT),
+        ("codex_model", state.codex_model or "(codex-default)", C_MODEL),
+        ("openai_model", state.openai_model, C_MODEL),
+        ("max_rounds", str(state.max_rounds), C_VALUE),
+        ("autoresearch", str(state.autoresearch), C_VALUE),
+        ("research", state.research_instructions or "(none)", C_DIM),
+        ("reasoning", state.reasoning_effort, C_VALUE),
+    ]
+    for label, value, color in fields:
+        print(_box_line(f"    {C_LABEL}{label:<20}{RESET} {color}{value}{RESET}", w))
+
+    print(_box_line("", w))
+    print(_box_bottom(w))
+    print()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Model/Reasoning resolution (unchanged logic)
+# ─────────────────────────────────────────────────────────────────────────────
 
 def _resolve_model(arg: str) -> str:
     normalized = arg.strip().lower()
@@ -311,6 +715,10 @@ def _resolve_reasoning(arg: str) -> str | None:
     return None
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Command Handler
+# ─────────────────────────────────────────────────────────────────────────────
+
 def _handle_command(state: TUIState, raw: str) -> str | None:
     parts = raw.strip().split(" ", 1)
     cmd = parts[0].lower()
@@ -322,72 +730,77 @@ def _handle_command(state: TUIState, raw: str) -> str | None:
     if cmd == "/exit":
         return "__exit__"
     if cmd == "/status":
-        return "\n".join(_status_lines(state))
+        _print_status(state)
+        return None
     if cmd == "/models":
         _print_model_matrix(state)
         return None
     if cmd == "/backend":
         if arg not in _BACKENDS:
-            return "Usage: /backend codex|mtp-openai"
+            return f"{C_WARNING}Usage:{RESET} {C_CMD}/backend codex|mtp-openai{RESET}"
         state.backend = arg
-        return f"Switched backend to {arg}."
+        return f"{C_SUCCESS}✓{RESET} Switched backend to {C_VALUE}{arg}{RESET}."
     if cmd == "/model":
         if not arg:
             _print_model_matrix(state)
-            return "Usage: /model <name|1..4|default>"
+            return f"{C_WARNING}Usage:{RESET} {C_CMD}/model <name|1..4|default>{RESET}"
         resolved = _resolve_model(arg)
         if state.backend == "codex":
             if resolved.lower() in {"default", "auto"}:
                 state.codex_model = None
-                return "Codex model reset to CLI default."
+                return f"{C_SUCCESS}✓{RESET} Codex model reset to CLI default."
             state.codex_model = resolved
-            return f"Codex model set to {resolved}."
+            return f"{C_SUCCESS}✓{RESET} Codex model set to {C_MODEL}{resolved}{RESET}."
         state.openai_model = resolved
         state.agent = None
-        return f"OpenAI model set to {resolved}. Agent reloaded."
+        return f"{C_SUCCESS}✓{RESET} OpenAI model set to {C_MODEL}{resolved}{RESET}. Agent reloaded."
     if cmd == "/reasoning":
         if not arg:
-            return "Usage: /reasoning <none|low|medium|high|xhigh>"
+            return f"{C_WARNING}Usage:{RESET} {C_CMD}/reasoning <none|low|medium|high|xhigh>{RESET}"
         resolved_reasoning = _resolve_reasoning(arg)
         if resolved_reasoning is None:
-            return "Usage: /reasoning <none|low|medium|high|xhigh>"
+            return f"{C_WARNING}Usage:{RESET} {C_CMD}/reasoning <none|low|medium|high|xhigh>{RESET}"
         state.reasoning_effort = resolved_reasoning
         return (
-            f"reasoning_effort set to {resolved_reasoning}. "
-            "For now this is forwarded to codex backend."
+            f"{C_SUCCESS}✓{RESET} reasoning_effort set to {C_VALUE}{resolved_reasoning}{RESET}. "
+            f"{C_DIM}Forwarded to codex backend.{RESET}"
         )
     if cmd == "/rounds":
         if not arg.isdigit():
-            return "Usage: /rounds <positive-int>"
+            return f"{C_WARNING}Usage:{RESET} {C_CMD}/rounds <positive-int>{RESET}"
         rounds = int(arg)
         if rounds < 1:
-            return "max_rounds must be >= 1"
+            return f"{C_ERROR}max_rounds must be >= 1{RESET}"
         state.max_rounds = rounds
-        return f"max_rounds set to {rounds}."
+        return f"{C_SUCCESS}✓{RESET} max_rounds set to {C_VALUE}{rounds}{RESET}."
     if cmd == "/autoresearch":
         lowered = arg.lower()
         if lowered not in {"on", "off"}:
-            return "Usage: /autoresearch on|off"
+            return f"{C_WARNING}Usage:{RESET} {C_CMD}/autoresearch on|off{RESET}"
         state.autoresearch = lowered == "on"
         state.agent = None
-        return f"autoresearch={state.autoresearch}. Agent reloaded."
+        return f"{C_SUCCESS}✓{RESET} autoresearch={C_VALUE}{state.autoresearch}{RESET}. Agent reloaded."
     if cmd == "/research":
         state.research_instructions = arg or None
         state.agent = None
-        return "research_instructions updated. Agent reloaded."
+        return f"{C_SUCCESS}✓{RESET} research_instructions updated. Agent reloaded."
     if cmd == "/codex-login":
         return _run_codex_login(state)
     if cmd == "/cd":
         if not arg:
-            return "Usage: /cd <dir>"
+            return f"{C_WARNING}Usage:{RESET} {C_CMD}/cd <dir>{RESET}"
         target = Path(arg).expanduser().resolve()
         if not target.exists() or not target.is_dir():
-            return f"Directory not found: {target}"
+            return f"{C_ERROR}✗ Directory not found:{RESET} {target}"
         state.cwd = target
         state.agent = None
-        return f"cwd set to {target}. Agent reloaded."
-    return "Unknown command. Use /help."
+        return f"{C_SUCCESS}✓{RESET} cwd set to {C_TEXT}{target}{RESET}. Agent reloaded."
+    return f"{C_ERROR}Unknown command.{RESET} Use {C_CMD}/help{RESET}."
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Input Normalization (unchanged logic)
+# ─────────────────────────────────────────────────────────────────────────────
 
 def _normalize_input(raw: str) -> str:
     # Support command entry without leading slash, e.g. `codex-login`.
@@ -412,6 +825,10 @@ def _normalize_input(raw: str) -> str:
         return "/" + raw
     return raw
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Attachment Handling (unchanged logic)
+# ─────────────────────────────────────────────────────────────────────────────
 
 def _token_looks_like_file_ref(token: str) -> bool:
     if token.startswith("@/"):
@@ -469,23 +886,114 @@ def _collect_prompt_attachments(prompt: str, cwd: Path) -> tuple[str, list[str],
     return expanded, attachments, warnings
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Spinner
+# ─────────────────────────────────────────────────────────────────────────────
+
+class _Spinner:
+    """An animated terminal spinner shown while waiting for a response."""
+
+    _FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+
+    def __init__(self, label: str = "Thinking"):
+        self._label = label
+        self._running = False
+        self._thread: threading.Thread | None = None
+
+    def start(self) -> None:
+        self._running = True
+        self._thread = threading.Thread(target=self._spin, daemon=True)
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._running = False
+        if self._thread:
+            self._thread.join(timeout=2)
+        # Clear the spinner line
+        sys.stdout.write(f"\r{' ' * (_get_term_width())}\r")
+        sys.stdout.flush()
+
+    def _spin(self) -> None:
+        idx = 0
+        # Gradient colors for spinner frames
+        spin_colors = [
+            _fg_rgb(167, 139, 250),
+            _fg_rgb(149, 155, 252),
+            _fg_rgb(129, 170, 248),
+            _fg_rgb(110, 195, 244),
+            _fg_rgb(90,  215, 235),
+            _fg_rgb(70,  230, 200),
+            _fg_rgb(90,  215, 235),
+            _fg_rgb(110, 195, 244),
+            _fg_rgb(129, 170, 248),
+            _fg_rgb(149, 155, 252),
+        ]
+        while self._running:
+            frame = self._FRAMES[idx % len(self._FRAMES)]
+            color = spin_colors[idx % len(spin_colors)]
+            elapsed = ""
+            sys.stdout.write(f"\r  {color}{frame}{RESET} {C_DIM}{self._label}...{RESET}{elapsed}")
+            sys.stdout.flush()
+            idx += 1
+            time.sleep(0.08)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Response Rendering
+# ─────────────────────────────────────────────────────────────────────────────
+
 def _render_prompt_and_response(result: ChatResult) -> None:
+    w = _get_term_width()
+
     if result.attachments:
-        print("attachments>")
+        print(f"\n  {C_ACCENT}📎 Attachments{RESET}")
         for item in result.attachments:
-            print(f"  - {item}")
+            print(f"     {C_DIM}├─{RESET} {C_TEXT}{item}{RESET}")
+
     if result.tool_events:
-        print("tools>")
-        for event in result.tool_events:
-            print(f"  - {event}")
+        print(f"\n  {C_LABEL}🔧 Tools{RESET}")
+        for i, event in enumerate(result.tool_events):
+            connector = "└─" if i == len(result.tool_events) - 1 else "├─"
+            print(f"     {C_DIM}{connector}{RESET} {C_VALUE}{event}{RESET}")
+
     if result.warnings:
-        print("notes>")
-        for warning in result.warnings:
-            print(f"  - {warning}")
-    print("assistant>")
-    print(result.text)
+        print(f"\n  {C_WARNING}⚠  Notes{RESET}")
+        for i, warning in enumerate(result.warnings):
+            connector = "└─" if i == len(result.warnings) - 1 else "├─"
+            print(f"     {C_DIM}{connector}{RESET} {C_WARNING}{warning}{RESET}")
+
+    # Response
+    print()
+    print(f"  {C_RESPONSE}{'─' * 3} Assistant {C_BORDER}{'─' * (w - 18)}{RESET}")
     print()
 
+    # Indent the response body
+    for line in result.text.splitlines():
+        print(f"  {C_TEXT}{line}{RESET}")
+
+    print()
+    print(f"  {C_BORDER}{'─' * (w - 4)}{RESET}")
+    print()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Prompt construction
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _build_prompt_prefix(state: TUIState) -> str:
+    """Build the styled prompt prefix."""
+    backend_short = "cdx" if state.backend == "codex" else "oai"
+    return (
+        f"{C_BRAND_BOLD}mtp{RESET}"
+        f"{C_DIM}:{RESET}"
+        f"{C_ACCENT_DIM}{backend_short}{RESET}"
+        f" {C_PROMPT_ARROW}❯{RESET} "
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Main Loop
+# ─────────────────────────────────────────────────────────────────────────────
 
 def run_tui(args) -> int:
     state = TUIState(
@@ -502,9 +1010,10 @@ def run_tui(args) -> int:
 
     while True:
         try:
-            raw = input("mtp> ").strip()
+            prompt_prefix = _build_prompt_prefix(state)
+            raw = input(prompt_prefix).strip()
         except (EOFError, KeyboardInterrupt):
-            print("\nExiting TUI.")
+            print(f"\n{C_DIM}Exiting TUI. Goodbye!{RESET}")
             return 0
         if not raw:
             continue
@@ -512,10 +1021,10 @@ def run_tui(args) -> int:
         if raw.startswith("/"):
             out = _handle_command(state, raw)
             if out == "__exit__":
-                print("Bye.")
+                print(f"\n{C_BRAND}Goodbye!{RESET} ✨\n")
                 return 0
             if out:
-                print(out)
+                print(f"  {out}")
             continue
 
         expanded_prompt, attachments, attachment_warnings = _collect_prompt_attachments(raw, state.cwd)
@@ -524,7 +1033,12 @@ def run_tui(args) -> int:
             if state.backend == "codex"
             else state.openai_model
         )
-        print(f"[{state.backend}] model={active_model} reasoning={state.reasoning_effort} running...")
+
+        # Show running status with spinner
+        spinner = _Spinner(
+            f"Running on {state.backend}  ·  model={active_model}  ·  reasoning={state.reasoning_effort}"
+        )
+        spinner.start()
         try:
             if state.backend == "codex":
                 result = _run_codex_prompt(state, expanded_prompt)
@@ -540,6 +1054,8 @@ def run_tui(args) -> int:
                     warnings=attachment_warnings,
                 )
         except Exception as exc:  # noqa: BLE001
-            print(f"Error: {exc}")
+            spinner.stop()
+            print(f"  {C_ERROR}✗ Error:{RESET} {exc}")
             continue
+        spinner.stop()
         _render_prompt_and_response(result)
