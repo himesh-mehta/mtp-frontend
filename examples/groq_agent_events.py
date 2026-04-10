@@ -30,7 +30,7 @@ def main() -> None:
         tools=calculator_tools,
         mode="member",
         instructions="You are the calculator member agent. Solve math tasks precisely and return concise results.",
-        debug_mode=False,
+        debug_mode=True,
         strict_dependency_mode=True,
     )
 
@@ -43,18 +43,25 @@ def main() -> None:
             "You are the orchestrator agent. Delegate math to agent.member.calculator, "
             "use tools for file/system operations, and be concise."
         ),
-        debug_mode=False,
+        autoresearch=True,
+        research_instructions=(
+            "Stay in persistent work mode until the request is fully complete. "
+            "Do not stop after a plausible answer. Verify results with tools when useful, "
+            "and call agent.terminate only after you have finished the task."
+        ),
+        debug_mode=True,
         strict_dependency_mode=True,
     )
 
     prompt = (
         "Calculate (25 * 4) + 10 and then list files in the current directory. "
-        "Give a short summary."
+        "Give a short summary. When you are fully done, call agent.terminate with the completion reason "
+        "and the final summary."
     )
 
     agent.print_response(
         prompt,
-        max_rounds=4,
+        max_rounds=12,
         stream=True,
         stream_events=True,
     )

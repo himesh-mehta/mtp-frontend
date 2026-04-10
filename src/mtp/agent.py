@@ -12,7 +12,7 @@ from uuid import uuid4
 
 from .events import EventStreamContext
 from .media import Audio, File, Image, Video
-from .prompts import DEFAULT_MTP_SYSTEM_INSTRUCTIONS
+from .prompts import DEFAULT_AUTORESEARCH_SYSTEM_INSTRUCTIONS, DEFAULT_MTP_SYSTEM_INSTRUCTIONS
 from .providers.common import ProviderCapabilities, capabilities_from_any
 from .session_store import SessionRecord, SessionRun, SessionStore
 from .runtime import (
@@ -51,6 +51,8 @@ class RunOutput:
     output_validation_error: str | None = None
     paused: bool = False
     pause_reason: str | None = None
+    terminated: bool = False
+    termination_reason: str | None = None
 
 
 class ProviderAdapter(Protocol):
@@ -84,6 +86,8 @@ class ProviderAdapter(Protocol):
 
 _AGENT_MODES = {"standalone", "member", "delegator", "orchestration"}
 _ORCHESTRATOR_MODES = {"delegator", "orchestration"}
+_AUTORESEARCH_TERMINATION_PREFIX = "__mtp_autoresearch_terminate__:"
+_AUTORESEARCH_DEFAULT_MAX_ROUNDS = 100
 
 
 class Agent:
@@ -104,6 +108,8 @@ class Agent:
         send_media_to_model: bool = True,
         enforce_provider_capabilities: bool = True,
         allow_stream_fallback: bool = True,
+        autoresearch: bool = False,
+        research_instructions: str | None = None,
         mode: str = "standalone",
         members: dict[str, "Agent"] | None = None,
         session_store: SessionStore | None = None,
@@ -128,6 +134,8 @@ class Agent:
         self.send_media_to_model = send_media_to_model
         self.enforce_provider_capabilities = enforce_provider_capabilities
         self.allow_stream_fallback = allow_stream_fallback
+        self.autoresearch = autoresearch
+        self.research_instructions = research_instructions
         self.mode = self._validate_mode(mode)
         self.members: dict[str, Agent] = {}
         self.session_store = session_store
@@ -138,6 +146,7 @@ class Agent:
         self._paused_runs: dict[str, RunOutput] = {}
         for name, member in (members or {}).items():
             self.add_member(name, member)
+        self._ensure_autoresearch_tool_registered()
 
     def _get_provider_capabilities(self) -> ProviderCapabilities | None:
         if not self.enforce_provider_capabilities:
@@ -233,6 +242,76 @@ class Agent:
                 "Agent mode is member. Prioritize handling delegated tasks directly and return concise, actionable output."
             )
         return None
+
+    def _build_autoresearch_system_instruction(self) -> str | None:
+        if not self.autoresearch:
+            return None
+        parts = [DEFAULT_AUTORESEARCH_SYSTEM_INSTRUCTIONS]
+        if self.research_instructions:
+            parts.append(self.research_instructions.strip())
+        return " ".join(part for part in parts if part)
+
+    def _autoresearch_terminate_tool_name(self) -> str:
+        return "agent.terminate"
+
+    def _ensure_autoresearch_tool_registered(self) -> None:
+        if not self.autoresearch:
+            return
+        tool_name = self._autoresearch_terminate_tool_name()
+        existing_names = {tool.name for tool in self.registry.list_tools()}
+        if tool_name in existing_names:
+            return
+        spec = ToolSpec(
+            name=tool_name,
+            description=(
+                "Terminate an autoresearch run when the user's requirements are satisfied. "
+                "Provide a concise reason and final summary."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "reason": {"type": "string"},
+                    "summary": {"type": "string"},
+                },
+                "required": ["reason", "summary"],
+                "additionalProperties": False,
+            },
+            tags=["agent", "autoresearch", "termination"],
+        )
+        self.registry.add_tool(RegisteredTool(spec=spec, handler=self._autoresearch_terminate))
+
+    def _autoresearch_terminate(self, reason: str, summary: str) -> str:
+        payload = {
+            "reason": str(reason or "Task completed."),
+            "summary": str(summary or reason or "Task completed."),
+        }
+        from .exceptions import StopAgentRun
+
+        raise StopAgentRun(_AUTORESEARCH_TERMINATION_PREFIX + json.dumps(payload, ensure_ascii=True))
+
+    def _parse_autoresearch_termination(self, message: str | None) -> dict[str, str] | None:
+        if not self.autoresearch or not isinstance(message, str):
+            return None
+        if not message.startswith(_AUTORESEARCH_TERMINATION_PREFIX):
+            return None
+        raw_payload = message.removeprefix(_AUTORESEARCH_TERMINATION_PREFIX).strip()
+        try:
+            payload = json.loads(raw_payload)
+        except json.JSONDecodeError:
+            return {
+                "reason": "Autoresearch terminated.",
+                "summary": raw_payload or "Autoresearch terminated.",
+            }
+        reason = str(payload.get("reason") or "Autoresearch terminated.")
+        summary = str(payload.get("summary") or reason)
+        return {"reason": reason, "summary": summary}
+
+    def _resolve_max_rounds(self, max_rounds: int) -> int:
+        if not self.autoresearch:
+            return max_rounds
+        if max_rounds == 5:
+            return _AUTORESEARCH_DEFAULT_MAX_ROUNDS
+        return max_rounds
 
     def _build_member_tool(self, member_name: str, member: "Agent") -> RegisteredTool:
         async def delegate_to_member(
@@ -631,6 +710,10 @@ class Agent:
         if self.instructions:
             self._append_message({"role": "system", "content": self.instructions})
             self._debug(f"user_instructions={self._short(self.instructions)}")
+        autoresearch_instruction = self._build_autoresearch_system_instruction()
+        if autoresearch_instruction:
+            self._append_message({"role": "system", "content": autoresearch_instruction})
+            self._debug(f"autoresearch_instructions={self._short(autoresearch_instruction)}")
         mode_instruction = self._build_mode_system_instruction()
         if mode_instruction:
             self._append_message({"role": "system", "content": mode_instruction})
@@ -730,7 +813,7 @@ class Agent:
         audios: list[Audio] | None = None,
         videos: list[Video] | None = None,
         files: list[File] | None = None,
-    ) -> tuple[list[ToolResult], str | None, bool, int, bool]:
+    ) -> tuple[list[ToolResult], str | None, bool, int, bool, str | None]:
         self._seed_system_messages_if_needed()
         media_context = self._coerce_media_context(images=images, audios=audios, videos=videos, files=files)
         if append_user_message and user_text is not None:
@@ -778,7 +861,10 @@ class Agent:
                 self._debug("provider returned direct response (no tool plan)")
                 self._debug(f"assistant_response={self._short(action.response_text)}")
                 self._append_message({"role": "assistant", "content": action.response_text})
-                return last_results, action.response_text, cancelled, total_tool_calls, paused
+                if self.autoresearch:
+                    self._debug("autoresearch mode active; continuing after direct response")
+                    continue
+                return last_results, action.response_text, cancelled, total_tool_calls, paused, None
 
             if action.plan is None:
                 self._debug("provider returned no plan; breaking loop")
@@ -852,8 +938,11 @@ class Agent:
                 )
                 continue
             except ToolStopError as exc:
+                termination = self._parse_autoresearch_termination(exc.message)
+                if termination is not None:
+                    return last_results, termination["summary"], cancelled, total_tool_calls, False, termination["reason"]
                 paused = True
-                return last_results, exc.message, cancelled, total_tool_calls, paused
+                return last_results, exc.message, cancelled, total_tool_calls, paused, None
             self._debug(f"executed_calls={len(last_results)}")
             for result in last_results:
                 self._debug(
@@ -867,7 +956,7 @@ class Agent:
                 )
             self._append_tool_messages_and_media(last_results)
 
-        return last_results, None, cancelled, total_tool_calls, paused
+        return last_results, None, cancelled, total_tool_calls, paused, None
 
     def run_output(
         self,
@@ -890,6 +979,7 @@ class Agent:
         parser_model: ProviderAdapter | None = None,
         parser_model_prompt: str | None = None,
     ) -> RunOutput:
+        max_rounds = self._resolve_max_rounds(max_rounds)
         if max_rounds < 1:
             raise ValueError("max_rounds must be >= 1")
         self._enforce_requested_input_modalities(
@@ -926,7 +1016,7 @@ class Agent:
         resolved_run_id = run_id or str(uuid4())
         self._register_run(resolved_run_id)
         try:
-            last_results, direct_response, cancelled, total_tool_calls, paused = self._run_tool_rounds(
+            last_results, direct_response, cancelled, total_tool_calls, paused, termination_reason = self._run_tool_rounds(
                 user_text=serialized_input,
                 max_rounds=max_rounds,
                 run_id=resolved_run_id,
@@ -975,6 +1065,8 @@ class Agent:
                 output_validation_error=output_validation_error,
                 paused=paused,
                 pause_reason=final_text if paused else None,
+                terminated=termination_reason is not None,
+                termination_reason=termination_reason,
             )
             if paused:
                 self._paused_runs[resolved_run_id] = run_output
@@ -1035,6 +1127,7 @@ class Agent:
         updated_tools: list[ToolResult] | None = None,
         tool_call_limit: int | None = None,
     ) -> RunOutput:
+        max_rounds = self._resolve_max_rounds(max_rounds)
         state = run_output
         if state is None and run_id is not None:
             state = self._paused_runs.get(run_id)
@@ -1048,7 +1141,7 @@ class Agent:
         resolved_run_id = run_id or state.run_id
         self._register_run(resolved_run_id)
         try:
-            last_results, direct_response, cancelled, total_tool_calls, paused = self._run_tool_rounds(
+            last_results, direct_response, cancelled, total_tool_calls, paused, termination_reason = self._run_tool_rounds(
                 user_text=None,
                 max_rounds=max_rounds,
                 run_id=resolved_run_id,
@@ -1079,6 +1172,8 @@ class Agent:
                 total_tool_calls=state.total_tool_calls + total_tool_calls,
                 paused=paused,
                 pause_reason=final_text if paused else None,
+                terminated=termination_reason is not None,
+                termination_reason=termination_reason,
             )
             if paused:
                 self._paused_runs[resolved_run_id] = continued
@@ -1112,7 +1207,7 @@ class Agent:
         audios: list[Audio] | None = None,
         videos: list[Video] | None = None,
         files: list[File] | None = None,
-    ) -> tuple[list[ToolResult], str | None, bool, int, bool]:
+    ) -> tuple[list[ToolResult], str | None, bool, int, bool, str | None]:
         self._seed_system_messages_if_needed()
         media_context = self._coerce_media_context(images=images, audios=audios, videos=videos, files=files)
         if append_user_message and user_text is not None:
@@ -1138,7 +1233,9 @@ class Agent:
             action = await self._anext_action(tools)
             if action.response_text and action.plan is None:
                 self._append_message({"role": "assistant", "content": action.response_text})
-                return last_results, action.response_text, cancelled, total_tool_calls, paused
+                if self.autoresearch:
+                    continue
+                return last_results, action.response_text, cancelled, total_tool_calls, paused, None
             if action.plan is None:
                 break
             call_count = sum(len(batch.calls) for batch in action.plan.batches)
@@ -1195,11 +1292,14 @@ class Agent:
                 )
                 continue
             except ToolStopError as exc:
+                termination = self._parse_autoresearch_termination(exc.message)
+                if termination is not None:
+                    return last_results, termination["summary"], cancelled, total_tool_calls, False, termination["reason"]
                 paused = True
-                return last_results, exc.message, cancelled, total_tool_calls, paused
+                return last_results, exc.message, cancelled, total_tool_calls, paused, None
             self._append_tool_messages_and_media(last_results)
 
-        return last_results, None, cancelled, total_tool_calls, paused
+        return last_results, None, cancelled, total_tool_calls, paused, None
 
     async def arun_output(
         self,
@@ -1222,6 +1322,7 @@ class Agent:
         parser_model: ProviderAdapter | None = None,
         parser_model_prompt: str | None = None,
     ) -> RunOutput:
+        max_rounds = self._resolve_max_rounds(max_rounds)
         if max_rounds < 1:
             raise ValueError("max_rounds must be >= 1")
         self._enforce_requested_input_modalities(
@@ -1258,7 +1359,7 @@ class Agent:
         resolved_run_id = run_id or str(uuid4())
         self._register_run(resolved_run_id)
         try:
-            last_results, direct_response, cancelled, total_tool_calls, paused = await self._arun_tool_rounds(
+            last_results, direct_response, cancelled, total_tool_calls, paused, termination_reason = await self._arun_tool_rounds(
                 user_text=serialized_input,
                 max_rounds=max_rounds,
                 run_id=resolved_run_id,
@@ -1305,6 +1406,8 @@ class Agent:
                 output_validation_error=output_validation_error,
                 paused=paused,
                 pause_reason=final_text if paused else None,
+                terminated=termination_reason is not None,
+                termination_reason=termination_reason,
             )
             if paused:
                 self._paused_runs[resolved_run_id] = run_output
@@ -1359,6 +1462,7 @@ class Agent:
         updated_tools: list[ToolResult] | None = None,
         tool_call_limit: int | None = None,
     ) -> RunOutput:
+        max_rounds = self._resolve_max_rounds(max_rounds)
         state = run_output
         if state is None and run_id is not None:
             state = self._paused_runs.get(run_id)
@@ -1372,7 +1476,7 @@ class Agent:
         resolved_run_id = run_id or state.run_id
         self._register_run(resolved_run_id)
         try:
-            last_results, direct_response, cancelled, total_tool_calls, paused = await self._arun_tool_rounds(
+            last_results, direct_response, cancelled, total_tool_calls, paused, termination_reason = await self._arun_tool_rounds(
                 user_text=None,
                 max_rounds=max_rounds,
                 run_id=resolved_run_id,
@@ -1403,6 +1507,8 @@ class Agent:
                 total_tool_calls=state.total_tool_calls + total_tool_calls,
                 paused=paused,
                 pause_reason=final_text if paused else None,
+                terminated=termination_reason is not None,
+                termination_reason=termination_reason,
             )
             if paused:
                 self._paused_runs[resolved_run_id] = continued
@@ -1431,6 +1537,7 @@ class Agent:
         run_id: str | None = None,
         input_schema: dict[str, Any] | None = None,
     ) -> Iterator[str]:
+        max_rounds = self._resolve_max_rounds(max_rounds)
         if max_rounds < 1:
             raise ValueError("max_rounds must be >= 1")
         self._enforce_requested_input_modalities(
@@ -1446,7 +1553,7 @@ class Agent:
         resolved_run_id = run_id or str(uuid4())
         self._register_run(resolved_run_id)
         try:
-            last_results, direct_response, cancelled, _tool_calls, paused = self._run_tool_rounds(
+            last_results, direct_response, cancelled, _tool_calls, paused, _termination_reason = self._run_tool_rounds(
                 user_text=serialized_input,
                 max_rounds=max_rounds,
                 run_id=resolved_run_id,
@@ -1513,6 +1620,7 @@ class Agent:
         tool_call_limit: int | None = None,
         input_schema: dict[str, Any] | None = None,
     ) -> Iterator[dict[str, Any]]:
+        max_rounds = self._resolve_max_rounds(max_rounds)
         if max_rounds < 1:
             raise ValueError("max_rounds must be >= 1")
         self._enforce_requested_input_modalities(
@@ -1546,6 +1654,8 @@ class Agent:
         mode_instruction = self._build_mode_system_instruction()
         system_instructions = [self.system_instructions] if self.system_instructions else []
         user_instructions = [self.instructions] if self.instructions else []
+        autoresearch_instruction = self._build_autoresearch_system_instruction()
+        research_instructions = [autoresearch_instruction] if autoresearch_instruction else []
         orchestration_instructions = [mode_instruction] if mode_instruction else []
         member_agents = self._member_agents_snapshot()
         direct_tool_names = [tool.name for tool in tools if not tool.name.startswith("agent.member.")]
@@ -1560,6 +1670,8 @@ class Agent:
             delegation_tool_names=delegation_tool_names,
             system_instructions=system_instructions,
             user_instructions=user_instructions,
+            autoresearch=self.autoresearch,
+            research_instructions=research_instructions,
             orchestration_instructions=orchestration_instructions,
             member_agents=member_agents,
             user_id=user_id,
@@ -1596,6 +1708,11 @@ class Agent:
 
                 if action.response_text and action.plan is None:
                     self._append_message({"role": "assistant", "content": action.response_text})
+                    if self.autoresearch:
+                        if stream_final:
+                            for chunk in self._chunk_text(action.response_text):
+                                yield events.emit("text_chunk", chunk=chunk, source="direct")
+                        continue
                     if stream_final:
                         for chunk in self._chunk_text(action.response_text):
                             yield events.emit("text_chunk", chunk=chunk, source="direct")
@@ -1713,6 +1830,18 @@ class Agent:
                     yield events.emit("tool_retry_requested", round=round_idx, tool_name=exc.tool_name, feedback=exc.message)
                     continue
                 except ToolStopError as exc:
+                    termination = self._parse_autoresearch_termination(exc.message)
+                    if termination is not None:
+                        final_text = termination["summary"]
+                        self._append_message({"role": "assistant", "content": final_text})
+                        yield events.emit(
+                            "run_terminated",
+                            round=round_idx,
+                            reason=termination["reason"],
+                            tool_name=exc.tool_name,
+                        )
+                        yield events.emit("run_completed", final_text=final_text, rounds=round_idx, total_tool_calls=total_tool_calls)
+                        return
                     final_text = exc.message or "Run paused."
                     self._append_message({"role": "assistant", "content": final_text})
                     yield events.emit("run_paused", round=round_idx, reason=final_text, tool_name=exc.tool_name)
@@ -1806,6 +1935,7 @@ class Agent:
         tool_call_limit: int | None = None,
         input_schema: dict[str, Any] | None = None,
     ) -> AsyncIterator[dict[str, Any]]:
+        max_rounds = self._resolve_max_rounds(max_rounds)
         if max_rounds < 1:
             raise ValueError("max_rounds must be >= 1")
         self._enforce_requested_input_modalities(
@@ -1839,6 +1969,8 @@ class Agent:
         mode_instruction = self._build_mode_system_instruction()
         system_instructions = [self.system_instructions] if self.system_instructions else []
         user_instructions = [self.instructions] if self.instructions else []
+        autoresearch_instruction = self._build_autoresearch_system_instruction()
+        research_instructions = [autoresearch_instruction] if autoresearch_instruction else []
         orchestration_instructions = [mode_instruction] if mode_instruction else []
         member_agents = self._member_agents_snapshot()
         direct_tool_names = [tool.name for tool in tools if not tool.name.startswith("agent.member.")]
@@ -1853,6 +1985,8 @@ class Agent:
             delegation_tool_names=delegation_tool_names,
             system_instructions=system_instructions,
             user_instructions=user_instructions,
+            autoresearch=self.autoresearch,
+            research_instructions=research_instructions,
             orchestration_instructions=orchestration_instructions,
             member_agents=member_agents,
             user_id=user_id,
@@ -1889,6 +2023,11 @@ class Agent:
 
                 if action.response_text and action.plan is None:
                     self._append_message({"role": "assistant", "content": action.response_text})
+                    if self.autoresearch:
+                        if stream_final:
+                            for chunk in self._chunk_text(action.response_text):
+                                yield events.emit("text_chunk", chunk=chunk, source="direct")
+                        continue
                     if stream_final:
                         for chunk in self._chunk_text(action.response_text):
                             yield events.emit("text_chunk", chunk=chunk, source="direct")
@@ -2004,6 +2143,18 @@ class Agent:
                     yield events.emit("tool_retry_requested", round=round_idx, tool_name=exc.tool_name, feedback=exc.message)
                     continue
                 except ToolStopError as exc:
+                    termination = self._parse_autoresearch_termination(exc.message)
+                    if termination is not None:
+                        final_text = termination["summary"]
+                        self._append_message({"role": "assistant", "content": final_text})
+                        yield events.emit(
+                            "run_terminated",
+                            round=round_idx,
+                            reason=termination["reason"],
+                            tool_name=exc.tool_name,
+                        )
+                        yield events.emit("run_completed", final_text=final_text, rounds=round_idx, total_tool_calls=total_tool_calls)
+                        return
                     final_text = exc.message or "Run paused."
                     self._append_message({"role": "assistant", "content": final_text})
                     yield events.emit("run_paused", round=round_idx, reason=final_text, tool_name=exc.tool_name)
