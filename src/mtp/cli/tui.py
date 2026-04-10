@@ -12,8 +12,9 @@ import tempfile
 import threading
 import time
 from typing import Any
+from uuid import uuid4
 
-from mtp import Agent
+from mtp import Agent, JsonSessionStore, SessionRecord
 from mtp.providers import OpenAI
 from mtp.toolkits.local import register_local_toolkits
 
@@ -53,7 +54,11 @@ _REASONING_NOTES = {
 _MODEL_CONTEXT_WINDOWS: dict[str, int] = {
     "gpt-5.4": 400_000,
     "gpt-5.4-mini": 400_000,
+    "gpt-5.3-codex": 400_000,
     "gpt-5.2": 400_000,
+    "gpt-5.2-codex": 400_000,
+    "gpt-5.1-codex-max": 400_000,
+    "gpt-5-codex": 400_000,
     "gpt-4o": 128_000,
 }
 
@@ -260,6 +265,18 @@ class ChatResult:
 
 
 @dataclass
+class TranscriptTurn:
+    prompt: str
+    response: str
+    backend: str
+    model: str
+    attachments: list[str]
+    warnings: list[str]
+    usage_lines: list[str]
+    created_at: str
+
+
+@dataclass
 class TUIState:
     backend: str
     codex_model: str | None
@@ -270,6 +287,11 @@ class TUIState:
     research_instructions: str | None
     reasoning_effort: str
     last_usage_lines: list[str]
+    transcript: list[TranscriptTurn]
+    session_store: JsonSessionStore
+    session_id: str
+    session_label: str | None
+    user_id: str | None
     agent: Agent.MTPAgent | None = None
     codex_bin: str | None = None
 
@@ -349,9 +371,11 @@ def _print_banner(state: TUIState) -> None:
     print(_box_line(cmd_header, w))
     cmds = [
         (f"{C_CMD}/help{RESET}", "Show full command reference"),
+        (f"{C_CMD}/new{RESET}", "Start a new chat"),
+        (f"{C_CMD}/history{RESET}", "Show recent turns"),
         (f"{C_CMD}/model{RESET}", "Switch model"),
         (f"{C_CMD}/backend{RESET}", "Switch backend"),
-        (f"{C_CMD}/reasoning{RESET}", "Set reasoning effort"),
+        (f"{C_CMD}/sessions{RESET}", "List saved chats"),
         (f"{C_CMD}/status{RESET}", "Show session info"),
         (f"{C_CMD}/exit{RESET}", "Exit TUI"),
     ]
@@ -380,7 +404,11 @@ def _print_banner(state: TUIState) -> None:
     model_val = f"{C_MODEL}{active_model or '(codex-default)'}{RESET}"
     reasoning_val = f"{C_VALUE}{state.reasoning_effort}{RESET}"
     cwd_val = f"{C_TEXT}{state.cwd}{RESET}"
+    session_val = f"{C_VALUE}{state.session_id}{RESET}"
+    turns_val = f"{C_VALUE}{len(state.transcript)}{RESET}"
 
+    print(_box_line(f"    {C_DIM}session{RESET}     {session_val}", w))
+    print(_box_line(f"    {C_DIM}turns{RESET}       {turns_val}", w))
     print(_box_line(f"    {C_DIM}backend{RESET}     {backend_val}", w))
     print(_box_line(f"    {C_DIM}model{RESET}       {model_val}", w))
     print(_box_line(f"    {C_DIM}reasoning{RESET}   {reasoning_val}", w))
@@ -416,6 +444,11 @@ def _print_help() -> None:
             ("/help", "Show this command reference"),
             ("/exit", "Exit TUI"),
             ("/status", "Show current session state"),
+            ("/new [label]", "Start a fresh chat session"),
+            ("/load <session_id>", "Load a saved chat session"),
+            ("/sessions", "List saved chat sessions"),
+            ("/history [n]", "Show recent turns in this chat"),
+            ("/clear", "Clear the terminal and redraw the banner"),
             ("/cd <dir>", "Change working directory"),
         ]),
         ("Backend & Model", [
@@ -511,6 +544,189 @@ def _detect_codex_bin() -> str | None:
     return None
 
 
+def _new_session_id() -> str:
+    return f"chat-{uuid4().hex[:10]}"
+
+
+def _now_label() -> str:
+    return time.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _active_model_name(state: TUIState) -> str:
+    if state.backend == "codex":
+        return state.codex_model or "(codex-default)"
+    return state.openai_model
+
+
+def _serialize_transcript(turns: list[TranscriptTurn]) -> list[dict[str, Any]]:
+    return [
+        {
+            "prompt": turn.prompt,
+            "response": turn.response,
+            "backend": turn.backend,
+            "model": turn.model,
+            "attachments": list(turn.attachments),
+            "warnings": list(turn.warnings),
+            "usage_lines": list(turn.usage_lines),
+            "created_at": turn.created_at,
+        }
+        for turn in turns
+    ]
+
+
+def _deserialize_transcript(payload: Any) -> list[TranscriptTurn]:
+    if not isinstance(payload, list):
+        return []
+    transcript: list[TranscriptTurn] = []
+    for item in payload:
+        if not isinstance(item, dict):
+            continue
+        transcript.append(
+            TranscriptTurn(
+                prompt=str(item.get("prompt") or ""),
+                response=str(item.get("response") or ""),
+                backend=str(item.get("backend") or "codex"),
+                model=str(item.get("model") or ""),
+                attachments=[str(x) for x in item.get("attachments") or []],
+                warnings=[str(x) for x in item.get("warnings") or []],
+                usage_lines=[str(x) for x in item.get("usage_lines") or []],
+                created_at=str(item.get("created_at") or _now_label()),
+            )
+        )
+    return transcript
+
+
+def _load_session_record(state: TUIState, session_id: str) -> SessionRecord | None:
+    return state.session_store.get_session(session_id=session_id, user_id=state.user_id)
+
+
+def _save_tui_session(state: TUIState) -> None:
+    existing = _load_session_record(state, state.session_id)
+    metadata = dict(existing.metadata if existing else {})
+    metadata["tui"] = {
+        "session_label": state.session_label,
+        "backend": state.backend,
+        "cwd": str(state.cwd),
+        "codex_model": state.codex_model,
+        "openai_model": state.openai_model,
+        "reasoning_effort": state.reasoning_effort,
+        "max_rounds": state.max_rounds,
+        "autoresearch": state.autoresearch,
+        "research_instructions": state.research_instructions,
+        "last_usage_lines": list(state.last_usage_lines),
+        "turn_count": len(state.transcript),
+        "updated_at": _now_label(),
+        "transcript": _serialize_transcript(state.transcript),
+    }
+    record = SessionRecord(
+        session_id=state.session_id,
+        user_id=state.user_id or (existing.user_id if existing else None),
+        metadata=metadata,
+        messages=list(existing.messages) if existing else [],
+        runs=list(existing.runs) if existing else [],
+        created_at=existing.created_at if existing else _now_label(),
+        updated_at=existing.updated_at if existing else _now_label(),
+    )
+    state.session_store.upsert_session(record)
+
+
+def _reset_chat(
+    state: TUIState,
+    *,
+    new_session: bool,
+    session_label: str | None = None,
+    preserve_settings: bool = True,
+) -> None:
+    if new_session:
+        state.session_id = _new_session_id()
+    state.session_label = session_label
+    state.transcript = []
+    state.last_usage_lines = []
+    state.agent = None
+    if not preserve_settings:
+        state.backend = "codex"
+        state.codex_model = "gpt-5.3-codex"
+        state.openai_model = "gpt-5.4-mini"
+        state.max_rounds = 6
+        state.autoresearch = False
+        state.research_instructions = None
+        state.reasoning_effort = "medium"
+    _save_tui_session(state)
+
+
+def _record_turn(state: TUIState, prompt: str, result: ChatResult) -> None:
+    state.transcript.append(
+        TranscriptTurn(
+            prompt=prompt,
+            response=result.text,
+            backend=state.backend,
+            model=_active_model_name(state),
+            attachments=list(result.attachments),
+            warnings=list(result.warnings),
+            usage_lines=list(result.usage_lines),
+            created_at=_now_label(),
+        )
+    )
+    state.last_usage_lines = list(result.usage_lines)
+    _save_tui_session(state)
+
+
+def _load_session_into_state(state: TUIState, record: SessionRecord) -> None:
+    tui_meta = record.metadata.get("tui") if isinstance(record.metadata, dict) else {}
+    tui_meta = tui_meta if isinstance(tui_meta, dict) else {}
+    state.session_id = record.session_id
+    state.session_label = (
+        str(tui_meta.get("session_label"))
+        if tui_meta.get("session_label") not in {None, ""}
+        else None
+    )
+    state.transcript = _deserialize_transcript(tui_meta.get("transcript"))
+    state.last_usage_lines = [str(x) for x in tui_meta.get("last_usage_lines") or []]
+    backend = str(tui_meta.get("backend") or state.backend)
+    if backend in _BACKENDS:
+        state.backend = backend
+    codex_model = tui_meta.get("codex_model")
+    openai_model = tui_meta.get("openai_model")
+    if isinstance(codex_model, str) or codex_model is None:
+        state.codex_model = codex_model
+    if isinstance(openai_model, str) and openai_model:
+        state.openai_model = openai_model
+    cwd_raw = tui_meta.get("cwd")
+    if isinstance(cwd_raw, str):
+        candidate = Path(cwd_raw).expanduser()
+        if candidate.exists() and candidate.is_dir():
+            state.cwd = candidate.resolve()
+    rounds = tui_meta.get("max_rounds")
+    if isinstance(rounds, int) and rounds >= 1:
+        state.max_rounds = rounds
+    reasoning = tui_meta.get("reasoning_effort")
+    if isinstance(reasoning, str) and _resolve_reasoning(reasoning) is not None:
+        state.reasoning_effort = reasoning
+    state.autoresearch = bool(tui_meta.get("autoresearch", state.autoresearch))
+    research_instructions = tui_meta.get("research_instructions")
+    state.research_instructions = (
+        str(research_instructions) if isinstance(research_instructions, str) and research_instructions else None
+    )
+    state.agent = None
+
+
+def _list_saved_sessions(store: JsonSessionStore) -> list[SessionRecord]:
+    if not store.file_path.exists():
+        return []
+    try:
+        rows = json.loads(store.file_path.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+    if not isinstance(rows, list):
+        return []
+    sessions: list[SessionRecord] = []
+    for row in rows:
+        if isinstance(row, dict):
+            sessions.append(SessionRecord.from_dict(row))
+    sessions.sort(key=lambda item: item.updated_at, reverse=True)
+    return sessions
+
+
 def _ensure_openai_agent(state: TUIState) -> Agent.MTPAgent:
     if state.agent is not None:
         return state.agent
@@ -524,6 +740,7 @@ def _ensure_openai_agent(state: TUIState) -> Agent.MTPAgent:
         strict_dependency_mode=True,
         autoresearch=state.autoresearch,
         research_instructions=state.research_instructions,
+        session_store=state.session_store,
     )
     return state.agent
 
@@ -540,14 +757,47 @@ def _format_pct(value: float | None) -> str:
     return f"{value:.2f}%"
 
 
-def _context_usage_line(model: str, input_tokens: int | None) -> str:
-    window = _MODEL_CONTEXT_WINDOWS.get(model)
+def _coerce_int(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    if isinstance(value, str):
+        cleaned = value.strip().replace(",", "")
+        if cleaned.isdigit():
+            try:
+                return int(cleaned)
+            except ValueError:
+                return None
+    return None
+
+
+def _resolve_context_window(model: str | None) -> tuple[str, int | None]:
+    model_name = (model or "").strip().lower()
+    if not model_name:
+        return "unknown", None
+    for candidate, window in _MODEL_CONTEXT_WINDOWS.items():
+        if model_name == candidate or candidate in model_name:
+            return candidate, window
+    return model_name, _MODEL_CONTEXT_WINDOWS.get(model_name)
+
+
+def _context_usage_lines(model: str | None, request_tokens: int | None) -> list[str]:
+    model_name, window = _resolve_context_window(model)
     if window is None:
-        return f"context={_format_int(input_tokens)} tokens / window=unknown"
-    if input_tokens is None:
-        return f"context=unknown / window={window:,}"
-    pct = (float(input_tokens) / float(window)) * 100.0
-    return f"context={input_tokens:,}/{window:,} ({_format_pct(pct)})"
+        return [f"context_window={_format_int(request_tokens)} tokens / window=unknown ({model_name})"]
+    if request_tokens is None:
+        return [f"context_window=unknown / window={window:,} ({model_name})"]
+    used = min(request_tokens, window)
+    remaining = max(window - used, 0)
+    used_pct = (float(used) / float(window)) * 100.0
+    remaining_pct = (float(remaining) / float(window)) * 100.0
+    return [
+        f"context_window={used:,}/{window:,} used ({_format_pct(used_pct)})",
+        f"context_remaining={remaining:,}/{window:,} ({_format_pct(remaining_pct)})",
+    ]
 
 
 def _merge_usage_metrics(total: dict[str, int], usage: dict[str, Any]) -> None:
@@ -561,14 +811,19 @@ def _extract_rate_values(payload: Any, found: dict[str, Any]) -> None:
     if isinstance(payload, dict):
         for key, value in payload.items():
             key_l = str(key).lower()
-            if "rate" in key_l and "remaining" in key_l:
+            if "rate" in key_l and any(part in key_l for part in ("remaining", "limit", "reset")):
                 found[str(key)] = value
             elif key_l in {
+                "x-ratelimit-limit-requests",
+                "x-ratelimit-limit-tokens",
                 "x-ratelimit-remaining-requests",
                 "x-ratelimit-remaining-tokens",
+                "limit_requests",
+                "limit_tokens",
                 "remaining_requests",
                 "remaining_tokens",
                 "remaining",
+                "retry-after",
             }:
                 found[str(key)] = value
             _extract_rate_values(value, found)
@@ -577,28 +832,45 @@ def _extract_rate_values(payload: Any, found: dict[str, Any]) -> None:
             _extract_rate_values(item, found)
 
 
-def _format_rate_line(rate_fields: dict[str, Any] | None) -> str:
-    if not rate_fields:
-        return "rate_remaining=unknown"
-    normalized = {str(k).lower(): v for k, v in rate_fields.items()}
-    req = normalized.get("x-ratelimit-remaining-requests") or normalized.get("remaining_requests")
-    tok = normalized.get("x-ratelimit-remaining-tokens") or normalized.get("remaining_tokens")
-    reset = (
-        normalized.get("x-ratelimit-reset-requests")
-        or normalized.get("x-ratelimit-reset-tokens")
-        or normalized.get("retry-after")
-    )
-    pieces: list[str] = []
-    if req is not None:
-        pieces.append(f"requests={req}")
-    if tok is not None:
-        pieces.append(f"tokens={tok}")
+def _rate_percentage_line(label: str, remaining: Any, limit: Any, reset: Any) -> str | None:
+    remaining_n = _coerce_int(remaining)
+    limit_n = _coerce_int(limit)
+    if remaining_n is None and limit_n is None:
+        return None
+    pieces = [label]
+    if remaining_n is not None and limit_n is not None and limit_n > 0:
+        pct = (float(remaining_n) / float(limit_n)) * 100.0
+        pieces.append(f"{remaining_n:,}/{limit_n:,} remaining ({_format_pct(pct)})")
+    elif remaining_n is not None:
+        pieces.append(f"{remaining_n:,} remaining")
+    else:
+        pieces.append(f"limit={limit_n:,}")
     if reset is not None:
         pieces.append(f"reset={reset}")
-    if pieces:
-        return "rate_remaining=" + ", ".join(pieces)
+    return f"rate_limit_{pieces[0]}=" + " | ".join(pieces[1:])
+
+
+def _format_rate_lines(rate_fields: dict[str, Any] | None) -> list[str]:
+    if not rate_fields:
+        return ["rate_remaining=unknown"]
+    normalized = {str(k).lower(): v for k, v in rate_fields.items()}
+    request_line = _rate_percentage_line(
+        "requests",
+        normalized.get("x-ratelimit-remaining-requests") or normalized.get("remaining_requests"),
+        normalized.get("x-ratelimit-limit-requests") or normalized.get("limit_requests"),
+        normalized.get("x-ratelimit-reset-requests") or normalized.get("retry-after"),
+    )
+    token_line = _rate_percentage_line(
+        "tokens",
+        normalized.get("x-ratelimit-remaining-tokens") or normalized.get("remaining_tokens"),
+        normalized.get("x-ratelimit-limit-tokens") or normalized.get("limit_tokens"),
+        normalized.get("x-ratelimit-reset-tokens") or normalized.get("retry-after"),
+    )
+    lines = [line for line in (request_line, token_line) if line is not None]
+    if lines:
+        return lines
     compact = ", ".join(f"{k}={v}" for k, v in sorted(rate_fields.items())[:4])
-    return f"rate_remaining={compact}"
+    return [f"rate_remaining={compact}"]
 
 
 def _parse_codex_json_events(stdout_text: str, active_model: str | None) -> tuple[str, list[str], list[str], list[str]]:
@@ -608,7 +880,7 @@ def _parse_codex_json_events(stdout_text: str, active_model: str | None) -> tupl
     final_text = ""
     assistant_chunks: list[str] = []
     total_usage: dict[str, int] = {}
-    peak_input_tokens: int | None = None
+    peak_request_tokens: int | None = None
     rate_fields: dict[str, Any] = {}
     for raw_line in stdout_text.splitlines():
         line = raw_line.strip()
@@ -625,9 +897,18 @@ def _parse_codex_json_events(stdout_text: str, active_model: str | None) -> tupl
         usage = event.get("usage")
         if isinstance(usage, dict):
             _merge_usage_metrics(total_usage, usage)
-            input_tokens = usage.get("input_tokens")
-            if isinstance(input_tokens, int):
-                peak_input_tokens = max(peak_input_tokens or 0, input_tokens)
+            request_tokens = usage.get("total_tokens")
+            if not isinstance(request_tokens, int):
+                input_tokens = usage.get("input_tokens")
+                output_tokens = usage.get("output_tokens")
+                if isinstance(input_tokens, int) and isinstance(output_tokens, int):
+                    request_tokens = input_tokens + output_tokens
+                elif isinstance(input_tokens, int):
+                    request_tokens = input_tokens
+                elif isinstance(output_tokens, int):
+                    request_tokens = output_tokens
+            if isinstance(request_tokens, int):
+                peak_request_tokens = max(peak_request_tokens or 0, request_tokens)
         _extract_rate_values(event, rate_fields)
         event_type = str(event.get("type", "")).strip().lower()
         if event_type in {"response.output_text.delta", "response.output_text"}:
@@ -657,17 +938,7 @@ def _parse_codex_json_events(stdout_text: str, active_model: str | None) -> tupl
         f"{_format_int(total_usage.get('total_tokens'))}/"
         f"{_format_int(total_usage.get('reasoning_tokens'))}"
     )
-    model_name = (active_model or "").strip().lower()
-    if "gpt-5.4-mini" in model_name:
-        usage_lines.append(_context_usage_line("gpt-5.4-mini", peak_input_tokens))
-    elif "gpt-5.4" in model_name:
-        usage_lines.append(_context_usage_line("gpt-5.4", peak_input_tokens))
-    elif "gpt-5.2" in model_name:
-        usage_lines.append(_context_usage_line("gpt-5.2", peak_input_tokens))
-    elif "gpt-4o" in model_name:
-        usage_lines.append(_context_usage_line("gpt-4o", peak_input_tokens))
-    else:
-        usage_lines.append(_context_usage_line("unknown", peak_input_tokens))
+    usage_lines.extend(_context_usage_lines(active_model, peak_request_tokens))
 
     remaining_pct: str | None = None
     for chunk in (stdout_text, "\n".join(warnings)):
@@ -678,7 +949,7 @@ def _parse_codex_json_events(stdout_text: str, active_model: str | None) -> tupl
     if remaining_pct is not None:
         usage_lines.append(f"rate_remaining={remaining_pct}")
     else:
-        usage_lines.append(_format_rate_line(rate_fields))
+        usage_lines.extend(_format_rate_lines(rate_fields))
 
     return final_text, tool_events, warnings, usage_lines
 
@@ -786,18 +1057,33 @@ def _run_openai_prompt(state: TUIState, prompt: str) -> ChatResult:
     tool_events: list[str] = []
     warnings: list[str] = []
     totals: dict[str, int] = {}
-    peak_input_tokens: int | None = None
+    peak_request_tokens: int | None = None
     latest_rate_limits: dict[str, Any] | None = None
 
-    for event in agent.run_events(prompt, max_rounds=state.max_rounds, stream_final=False):
+    for event in agent.run_events(
+        prompt,
+        max_rounds=state.max_rounds,
+        stream_final=False,
+        session_id=state.session_id,
+        user_id=state.user_id,
+    ):
         event_type = str(event.get("type", ""))
         if event_type == "llm_response":
             usage = event.get("usage")
             if isinstance(usage, dict):
                 _merge_usage_metrics(totals, usage)
-                input_tokens = usage.get("input_tokens")
-                if isinstance(input_tokens, int):
-                    peak_input_tokens = max(peak_input_tokens or 0, input_tokens)
+                request_tokens = usage.get("total_tokens")
+                if not isinstance(request_tokens, int):
+                    input_tokens = usage.get("input_tokens")
+                    output_tokens = usage.get("output_tokens")
+                    if isinstance(input_tokens, int) and isinstance(output_tokens, int):
+                        request_tokens = input_tokens + output_tokens
+                    elif isinstance(input_tokens, int):
+                        request_tokens = input_tokens
+                    elif isinstance(output_tokens, int):
+                        request_tokens = output_tokens
+                if isinstance(request_tokens, int):
+                    peak_request_tokens = max(peak_request_tokens or 0, request_tokens)
             rate_limits = event.get("rate_limits")
             if isinstance(rate_limits, dict):
                 latest_rate_limits = rate_limits
@@ -822,9 +1108,9 @@ def _run_openai_prompt(state: TUIState, prompt: str) -> ChatResult:
         f"{_format_int(totals.get('output_tokens'))}/"
         f"{_format_int(totals.get('total_tokens'))}/"
         f"{_format_int(totals.get('reasoning_tokens'))}",
-        _context_usage_line(state.openai_model, peak_input_tokens),
-        _format_rate_line(latest_rate_limits),
     ]
+    usage_lines.extend(_context_usage_lines(state.openai_model, peak_request_tokens))
+    usage_lines.extend(_format_rate_lines(latest_rate_limits))
     return ChatResult(
         text=final_text or "(No final text returned.)",
         tool_events=tool_events,
@@ -841,6 +1127,9 @@ def _run_openai_prompt(state: TUIState, prompt: str) -> ChatResult:
 def _status_lines(state: TUIState) -> list[str]:
     last_usage = " | ".join(state.last_usage_lines) if state.last_usage_lines else "(none)"
     return [
+        f"session_id={state.session_id}",
+        f"session_label={state.session_label or '(none)'}",
+        f"turns={len(state.transcript)}",
         f"backend={state.backend}",
         f"cwd={state.cwd}",
         f"codex_model={state.codex_model or '(codex-default)'}",
@@ -862,6 +1151,9 @@ def _print_status(state: TUIState) -> None:
     print(_box_line("", w))
 
     fields = [
+        ("session_id", state.session_id, C_VALUE),
+        ("session_label", state.session_label or "(none)", C_DIM),
+        ("turns", str(len(state.transcript)), C_VALUE),
         ("backend", state.backend, C_SUCCESS),
         ("cwd", str(state.cwd), C_TEXT),
         ("codex_model", state.codex_model or "(codex-default)", C_MODEL),
@@ -879,6 +1171,68 @@ def _print_status(state: TUIState) -> None:
     for extra in usage_lines[1:]:
         print(_box_line(f"    {C_LABEL}{'':<20}{RESET} {C_VALUE}{extra}{RESET}", w))
 
+    print(_box_line("", w))
+    print(_box_bottom(w))
+    print()
+
+
+def _print_history(state: TUIState, limit: int | None = None) -> None:
+    w = _get_term_width()
+    turns = state.transcript[-limit:] if limit is not None else state.transcript
+    print()
+    print(_box_top(w))
+    print(_box_line(f"  {C_BRAND_BOLD}Chat History{RESET}", w))
+    print(_box_separator(w))
+    if not turns:
+        print(_box_line("", w))
+        print(_box_line(f"  {C_DIM}No turns yet in this chat.{RESET}", w))
+        print(_box_line("", w))
+        print(_box_bottom(w))
+        print()
+        return
+    for idx, turn in enumerate(turns, start=max(1, len(state.transcript) - len(turns) + 1)):
+        print(_box_line("", w))
+        meta = f"  {C_LABEL}Turn {idx}{RESET}  {C_DIM}{turn.created_at} · {turn.backend} · {turn.model}{RESET}"
+        print(_box_line(meta, w))
+        prompt_preview = turn.prompt.replace("\n", " ")
+        response_preview = turn.response.replace("\n", " ")
+        if len(prompt_preview) > 110:
+            prompt_preview = prompt_preview[:107] + "..."
+        if len(response_preview) > 110:
+            response_preview = response_preview[:107] + "..."
+        print(_box_line(f"    {C_ACCENT}User:{RESET} {C_TEXT}{prompt_preview}{RESET}", w))
+        print(_box_line(f"    {C_SUCCESS}Assistant:{RESET} {C_TEXT}{response_preview}{RESET}", w))
+    print(_box_line("", w))
+    print(_box_bottom(w))
+    print()
+
+
+def _print_saved_sessions(state: TUIState) -> None:
+    sessions = _list_saved_sessions(state.session_store)
+    w = _get_term_width()
+    print()
+    print(_box_top(w))
+    print(_box_line(f"  {C_BRAND_BOLD}Saved Sessions{RESET}", w))
+    print(_box_separator(w))
+    if not sessions:
+        print(_box_line("", w))
+        print(_box_line(f"  {C_DIM}No saved sessions yet.{RESET}", w))
+        print(_box_line("", w))
+        print(_box_bottom(w))
+        print()
+        return
+    for record in sessions[:12]:
+        tui_meta = record.metadata.get("tui") if isinstance(record.metadata, dict) else {}
+        tui_meta = tui_meta if isinstance(tui_meta, dict) else {}
+        label = str(tui_meta.get("session_label") or "(unnamed)")
+        turn_count = int(tui_meta.get("turn_count") or 0)
+        backend = str(tui_meta.get("backend") or "unknown")
+        updated = str(tui_meta.get("updated_at") or record.updated_at)
+        active = f" {C_SUCCESS}← active{RESET}" if record.session_id == state.session_id else ""
+        print(_box_line("", w))
+        print(_box_line(f"  {C_VALUE}{record.session_id}{RESET}{active}", w))
+        print(_box_line(f"    {C_TEXT}{label}{RESET}", w))
+        print(_box_line(f"    {C_DIM}{backend} · turns={turn_count} · updated={updated}{RESET}", w))
     print(_box_line("", w))
     print(_box_bottom(w))
     print()
@@ -920,9 +1274,39 @@ def _handle_command(state: TUIState, raw: str) -> str | None:
         return None
     if cmd == "/exit":
         return "__exit__"
+    if cmd in {"/new", "/reset"}:
+        _reset_chat(state, new_session=True, session_label=arg or None)
+        label_text = f" ({arg})" if arg else ""
+        return f"{C_SUCCESS}✓{RESET} Started new chat {C_VALUE}{state.session_id}{RESET}{label_text}."
+    if cmd == "/clear":
+        os.system("cls" if os.name == "nt" else "clear")
+        _print_banner(state)
+        return None
     if cmd == "/status":
         _print_status(state)
         return None
+    if cmd == "/history":
+        limit: int | None = None
+        if arg:
+            if not arg.isdigit():
+                return f"{C_WARNING}Usage:{RESET} {C_CMD}/history [count]{RESET}"
+            limit = int(arg)
+        _print_history(state, limit=limit)
+        return None
+    if cmd == "/sessions":
+        _print_saved_sessions(state)
+        return None
+    if cmd == "/load":
+        if not arg:
+            return f"{C_WARNING}Usage:{RESET} {C_CMD}/load <session_id>{RESET}"
+        record = _load_session_record(state, arg)
+        if record is None:
+            return f"{C_ERROR}✗ Session not found:{RESET} {arg}"
+        _load_session_into_state(state, record)
+        return (
+            f"{C_SUCCESS}✓{RESET} Loaded session {C_VALUE}{state.session_id}{RESET} "
+            f"with {C_VALUE}{len(state.transcript)}{RESET} turns."
+        )
     if cmd == "/models":
         _print_model_matrix(state)
         return None
@@ -930,6 +1314,7 @@ def _handle_command(state: TUIState, raw: str) -> str | None:
         if arg not in _BACKENDS:
             return f"{C_WARNING}Usage:{RESET} {C_CMD}/backend codex|mtp-openai{RESET}"
         state.backend = arg
+        _save_tui_session(state)
         return f"{C_SUCCESS}✓{RESET} Switched backend to {C_VALUE}{arg}{RESET}."
     if cmd == "/model":
         if not arg:
@@ -939,11 +1324,14 @@ def _handle_command(state: TUIState, raw: str) -> str | None:
         if state.backend == "codex":
             if resolved.lower() in {"default", "auto"}:
                 state.codex_model = None
+                _save_tui_session(state)
                 return f"{C_SUCCESS}✓{RESET} Codex model reset to CLI default."
             state.codex_model = resolved
+            _save_tui_session(state)
             return f"{C_SUCCESS}✓{RESET} Codex model set to {C_MODEL}{resolved}{RESET}."
         state.openai_model = resolved
         state.agent = None
+        _save_tui_session(state)
         return f"{C_SUCCESS}✓{RESET} OpenAI model set to {C_MODEL}{resolved}{RESET}. Agent reloaded."
     if cmd == "/reasoning":
         if not arg:
@@ -952,6 +1340,7 @@ def _handle_command(state: TUIState, raw: str) -> str | None:
         if resolved_reasoning is None:
             return f"{C_WARNING}Usage:{RESET} {C_CMD}/reasoning <none|low|medium|high|xhigh>{RESET}"
         state.reasoning_effort = resolved_reasoning
+        _save_tui_session(state)
         return (
             f"{C_SUCCESS}✓{RESET} reasoning_effort set to {C_VALUE}{resolved_reasoning}{RESET}. "
             f"{C_DIM}Forwarded to codex backend.{RESET}"
@@ -963,6 +1352,7 @@ def _handle_command(state: TUIState, raw: str) -> str | None:
         if rounds < 1:
             return f"{C_ERROR}max_rounds must be >= 1{RESET}"
         state.max_rounds = rounds
+        _save_tui_session(state)
         return f"{C_SUCCESS}✓{RESET} max_rounds set to {C_VALUE}{rounds}{RESET}."
     if cmd == "/autoresearch":
         lowered = arg.lower()
@@ -970,10 +1360,12 @@ def _handle_command(state: TUIState, raw: str) -> str | None:
             return f"{C_WARNING}Usage:{RESET} {C_CMD}/autoresearch on|off{RESET}"
         state.autoresearch = lowered == "on"
         state.agent = None
+        _save_tui_session(state)
         return f"{C_SUCCESS}✓{RESET} autoresearch={C_VALUE}{state.autoresearch}{RESET}. Agent reloaded."
     if cmd == "/research":
         state.research_instructions = arg or None
         state.agent = None
+        _save_tui_session(state)
         return f"{C_SUCCESS}✓{RESET} research_instructions updated. Agent reloaded."
     if cmd == "/codex-login":
         return _run_codex_login(state)
@@ -985,6 +1377,7 @@ def _handle_command(state: TUIState, raw: str) -> str | None:
             return f"{C_ERROR}✗ Directory not found:{RESET} {target}"
         state.cwd = target
         state.agent = None
+        _save_tui_session(state)
         return f"{C_SUCCESS}✓{RESET} cwd set to {C_TEXT}{target}{RESET}. Agent reloaded."
     return f"{C_ERROR}Unknown command.{RESET} Use {C_CMD}/help{RESET}."
 
@@ -998,7 +1391,13 @@ def _normalize_input(raw: str) -> str:
     command_heads = {
         "help",
         "exit",
+        "new",
+        "reset",
+        "clear",
         "status",
+        "history",
+        "sessions",
+        "load",
         "backend",
         "models",
         "model",
@@ -1180,10 +1579,13 @@ def _render_prompt_and_response(result: ChatResult) -> None:
 def _build_prompt_prefix(state: TUIState) -> str:
     """Build the styled prompt prefix."""
     backend_short = "cdx" if state.backend == "codex" else "oai"
+    session_short = state.session_id.split("-")[-1][:6]
     return (
         f"{C_BRAND_BOLD}mtp{RESET}"
         f"{C_DIM}:{RESET}"
         f"{C_ACCENT_DIM}{backend_short}{RESET}"
+        f"{C_DIM}:{RESET}"
+        f"{C_VALUE}{session_short}{RESET}"
         f" {C_PROMPT_ARROW}❯{RESET} "
     )
 
@@ -1193,6 +1595,8 @@ def _build_prompt_prefix(state: TUIState) -> str:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def run_tui(args) -> int:
+    session_store = JsonSessionStore(db_path=args.session_db)
+    initial_session_id = args.session_id or _new_session_id()
     state = TUIState(
         backend=args.backend,
         codex_model=args.codex_model,
@@ -1203,7 +1607,17 @@ def run_tui(args) -> int:
         research_instructions=args.research_instructions,
         reasoning_effort=str(getattr(args, "reasoning_effort", "medium")),
         last_usage_lines=[],
+        transcript=[],
+        session_store=session_store,
+        session_id=initial_session_id,
+        session_label=None,
+        user_id="tui-user",
     )
+    if args.session_id:
+        existing = _load_session_record(state, args.session_id)
+        if existing is not None:
+            _load_session_into_state(state, existing)
+    _save_tui_session(state)
     _print_banner(state)
 
     while True:
@@ -1251,5 +1665,5 @@ def run_tui(args) -> int:
             print(f"  {C_ERROR}✗ Error:{RESET} {exc}")
             continue
         spinner.stop()
-        state.last_usage_lines = list(result.usage_lines)
+        _record_turn(state, raw, result)
         _render_prompt_and_response(result)

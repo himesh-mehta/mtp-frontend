@@ -198,6 +198,16 @@ def build_parser() -> argparse.ArgumentParser:
     tui_cmd.add_argument("--max-rounds", type=int, default=6, help="max_rounds for mtp-openai backend.")
     tui_cmd.add_argument("--cwd", default=".", help="Working directory used by tools and Codex backend.")
     tui_cmd.add_argument(
+        "--session-db",
+        default="tmp/mtp_tui_sessions",
+        help="Directory used to persist TUI chat sessions.",
+    )
+    tui_cmd.add_argument(
+        "--session-id",
+        default=None,
+        help="Optional existing session id to load on startup.",
+    )
+    tui_cmd.add_argument(
         "--reasoning-effort",
         choices=["none", "low", "medium", "high", "xhigh"],
         default="medium",
