@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import json
 import os
 from pathlib import Path
@@ -18,6 +18,19 @@ from uuid import uuid4
 from mtp import Agent, JsonSessionStore, SessionRecord
 from mtp.providers import OpenAI
 from mtp.toolkits.local import register_local_toolkits
+
+# ── prompt_toolkit (optional, graceful fallback) ─────────────────────────────
+try:
+    from prompt_toolkit import PromptSession
+    from prompt_toolkit.history import FileHistory
+    from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
+    from prompt_toolkit.completion import Completer, Completion
+    from prompt_toolkit.key_binding import KeyBindings
+    from prompt_toolkit.formatted_text import HTML
+    from prompt_toolkit.styles import Style as PTKStyle
+    _HAS_PROMPT_TOOLKIT = True
+except ImportError:
+    _HAS_PROMPT_TOOLKIT = False
 
 
 _BACKENDS = {"codex", "mtp-openai"}
@@ -391,6 +404,8 @@ class TUIState:
     user_id: str | None
     agent: Agent.MTPAgent | None = None
     codex_bin: str | None = None
+    last_tool_events: list[str] = field(default_factory=list)
+    last_warnings: list[str] = field(default_factory=list)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -437,6 +452,7 @@ def _print_help() -> None:
             ("/history [n]", "Show recent turns in this chat"),
             ("/clear", "Clear the terminal and redraw the banner"),
             ("/cd <dir>", "Change working directory"),
+            ("/tools", "Show all tool calls from the last turn"),
         ]),
         ("Backend & Model", [
             ("/backend codex|mtp-openai", "Switch active backend"),
@@ -463,8 +479,24 @@ def _print_help() -> None:
     print()
     print(thin_rule)
     print(f"  {C_LABEL}Prompt UX{RESET}")
-    print(f"    {C_DIM}Type{RESET} {C_ACCENT}@path/to/file.py{RESET} {C_DIM}in a prompt to attach file context.{RESET}")
+    print(f"    {C_DIM}Type{RESET} {C_ACCENT}@path/to/file{RESET} {C_DIM}in a prompt to attach file context (Tab for suggestions).{RESET}")
     print(f"    {C_DIM}Example:{RESET} {C_TEXT}explain bug in @src/mtp/cli/tui.py and propose patch{RESET}")
+    print()
+    print(thin_rule)
+    print(f"  {C_LABEL}Keyboard Shortcuts{RESET}")
+    shortcuts = [
+        ("Ctrl+C", "Interrupt current request / Exit on double press"),
+        ("Ctrl+L", "Clear screen and redraw banner"),
+        ("Ctrl+D", "Exit TUI"),
+        ("Ctrl+R", "Reverse search through history"),
+        ("Tab", "Accept autocomplete suggestion"),
+        ("↑ / ↓", "Navigate command history"),
+    ]
+    for key, desc in shortcuts:
+        key_str = f"{C_KEY}{key}{RESET}"
+        key_vis = len(_strip_ansi(key_str))
+        pad = max(1, 20 - key_vis)
+        print(f"    {key_str}{' ' * pad}{C_DIM}{desc}{RESET}")
     print()
 
 
@@ -1557,6 +1589,9 @@ def _handle_command(state: TUIState, raw: str) -> str | None:
         return "__compose__"
     if cmd == "/exit":
         return "__exit__"
+    if cmd == "/tools":
+        _print_tool_events_expanded(state)
+        return None
     if cmd in {"/new", "/reset"}:
         _reset_chat(state, new_session=True, session_label=arg or None)
         label_text = f" ({arg})" if arg else ""
@@ -1691,6 +1726,7 @@ def _normalize_input(raw: str) -> str:
         "autoresearch",
         "research",
         "cd",
+        "tools",
     }
     if raw.startswith("/"):
         return raw
@@ -1876,8 +1912,17 @@ def _render_usage_bar(used: int, total: int) -> str:
     return f"{bar} {color}{pct_str}{RESET} {C_DIM}{used:,}/{total:,}{RESET}"
 
 
-def _render_prompt_and_response(result: ChatResult) -> None:
+_MAX_VISIBLE_TOOLS = 3  # Show at most N tool calls before collapsing
+_MAX_VISIBLE_WARNINGS = 2
+
+
+def _render_prompt_and_response(result: ChatResult, state: TUIState | None = None) -> None:
     w = _get_term_width()
+
+    # Store tool events on state for /tools command
+    if state is not None:
+        state.last_tool_events = list(result.tool_events)
+        state.last_warnings = list(result.warnings)
 
     # Compact metadata line — attachments + tools + warnings on minimal lines
     meta_parts: list[str] = []
@@ -1891,15 +1936,25 @@ def _render_prompt_and_response(result: ChatResult) -> None:
     if meta_parts:
         print(f"  {C_DIM}│{RESET} {'  '.join(meta_parts)}")
 
-    # Tool events — compact tree
+    # Tool events — collapsible tree (show first N, collapse rest)
     if result.tool_events:
-        for i, event in enumerate(result.tool_events):
-            connector = "└─" if i == len(result.tool_events) - 1 else "├─"
+        visible = result.tool_events[:_MAX_VISIBLE_TOOLS]
+        hidden_count = len(result.tool_events) - _MAX_VISIBLE_TOOLS
+        for i, event in enumerate(visible):
+            is_last = (i == len(visible) - 1) and hidden_count <= 0
+            connector = "└─" if is_last else "├─"
             print(f"  {C_DIM}│  {connector}{RESET} {C_VALUE}{event}{RESET}")
+        if hidden_count > 0:
+            print(f"  {C_DIM}│  └─ ... {C_ACCENT}{hidden_count} more{RESET} {C_DIM}(type {C_CMD}/tools{C_DIM} to expand){RESET}")
 
+    # Warnings — collapsible
     if result.warnings:
-        for warning in result.warnings:
+        visible_w = result.warnings[:_MAX_VISIBLE_WARNINGS]
+        hidden_w = len(result.warnings) - _MAX_VISIBLE_WARNINGS
+        for warning in visible_w:
             print(f"  {C_DIM}│{RESET}  {C_WARNING}⚠ {warning}{RESET}")
+        if hidden_w > 0:
+            print(f"  {C_DIM}│{RESET}  {C_WARNING}⚠ ... {hidden_w} more warnings{RESET}")
 
     # Response header
     print()
@@ -1984,6 +2039,215 @@ def _render_prompt_and_response(result: ChatResult) -> None:
     print()
 
 
+def _print_tool_events_expanded(state: TUIState) -> None:
+    """Print all tool events from the last turn (used by /tools command)."""
+    w = _get_term_width()
+    rule_w = min(60, w - 4)
+    rule_pad = max(0, (w - rule_w) // 2)
+    thin_rule = f"{' ' * rule_pad}{C_BORDER}{'─' * rule_w}{RESET}"
+    print()
+    print(f"  {C_BRAND_BOLD}Tool Events (Last Turn){RESET}")
+    print(thin_rule)
+    if not state.last_tool_events:
+        print(f"  {C_DIM}No tool events from the last turn.{RESET}")
+        print()
+        return
+    print(f"  {C_LABEL}⚙ {len(state.last_tool_events)} tools{RESET}")
+    for i, event in enumerate(state.last_tool_events):
+        connector = "└─" if i == len(state.last_tool_events) - 1 else "├─"
+        print(f"  {C_DIM}{connector}{RESET} {C_VALUE}{event}{RESET}")
+    if state.last_warnings:
+        print()
+        print(f"  {C_WARNING}⚠ {len(state.last_warnings)} warnings{RESET}")
+        for warning in state.last_warnings:
+            print(f"    {C_WARNING}{warning}{RESET}")
+    print()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Toast Notifications
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _toast(msg: str, kind: str = "info", duration: float = 1.8) -> None:
+    """Show a non-blocking top-right toast that auto-clears after `duration`."""
+    if not _COLOR_ENABLED:
+        return
+    colors = {
+        "info": C_ACCENT,
+        "success": C_SUCCESS,
+        "warning": C_WARNING,
+        "error": C_ERROR,
+    }
+    icons = {"info": "ℹ", "success": "✓", "warning": "⚠", "error": "✗"}
+    c = colors.get(kind, C_ACCENT)
+    icon = icons.get(kind, "•")
+    text = f" {icon} {msg} "
+    w = _get_term_width()
+    visible_len = len(_strip_ansi(text))
+    x = max(1, w - visible_len - 1)
+    # Save cursor → move to row=1, col=x → draw → restore cursor
+    sys.stdout.write(
+        f"\033[s\033[1;{x}H{c}{DIM}{text}{RESET}\033[u"
+    )
+    sys.stdout.flush()
+
+    def _clear_toast() -> None:
+        time.sleep(duration)
+        sys.stdout.write(f"\033[s\033[1;{x}H{' ' * visible_len}\033[u")
+        sys.stdout.flush()
+
+    threading.Thread(target=_clear_toast, daemon=True).start()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# @ File Completer + Command Completer (for prompt_toolkit)
+# ─────────────────────────────────────────────────────────────────────────────
+
+if _HAS_PROMPT_TOOLKIT:
+    # Directories to skip entirely during file scanning
+    _SKIP_DIRS = {
+        "__pycache__", "node_modules", ".git", "venv", ".venv", ".env",
+        ".tox", ".mypy_cache", ".pytest_cache", ".ruff_cache",
+        "site-packages", "dist-info", ".egg-info", ".eggs",
+        "Lib", "Include", "Scripts", "lib", "include",
+        "build", "dist", ".idea", ".vs", ".vscode",
+        "htmlcov", "coverage", ".coverage",
+    }
+
+    class _AtFileCompleter(Completer):  # type: ignore[misc]
+        """Autocomplete file paths after @ in prompts — cached & fast."""
+
+        _MAX_DEPTH = 3
+        _MAX_RESULTS = 25
+        _CACHE_TTL = 5.0  # Seconds before re-scanning
+
+        def __init__(self, cwd_fn):
+            self.cwd_fn = cwd_fn
+            self._cache: list[str] = []
+            self._cache_cwd: Path | None = None
+            self._cache_time: float = 0.0
+
+        def _refresh_cache(self, cwd: Path) -> list[str]:
+            """Rebuild file list only when CWD changes or cache expires."""
+            now = time.monotonic()
+            if (
+                self._cache_cwd == cwd
+                and self._cache
+                and (now - self._cache_time) < self._CACHE_TTL
+            ):
+                return self._cache
+
+            entries: list[str] = []
+            self._walk(cwd, cwd, 0, entries)
+            entries.sort(key=str.lower)
+            self._cache = entries
+            self._cache_cwd = cwd
+            self._cache_time = now
+            return entries
+
+        def _walk(self, base: Path, current: Path, depth: int, out: list[str]) -> None:
+            """Manual walk with depth limit and smart directory skipping."""
+            if depth > self._MAX_DEPTH:
+                return
+            try:
+                children = sorted(current.iterdir(), key=lambda p: p.name.lower())
+            except (PermissionError, OSError):
+                return
+            for child in children:
+                name = child.name
+                if name.startswith("."):
+                    continue
+                if name in _SKIP_DIRS:
+                    continue
+                if name.endswith(".dist-info") or name.endswith(".egg-info"):
+                    continue
+                try:
+                    rel = str(child.relative_to(base)).replace("\\", "/")
+                except ValueError:
+                    continue
+                out.append(rel)
+                if child.is_dir():
+                    self._walk(base, child, depth + 1, out)
+
+        def get_completions(self, document, complete_event):
+            text = document.text_before_cursor
+            at_pos = text.rfind("@")
+            if at_pos < 0:
+                return
+            if at_pos > 0 and text[at_pos - 1] not in (" ", "\t", "\n"):
+                return
+            partial = text[at_pos + 1:].lower().replace("\\", "/")
+            raw_partial = text[at_pos + 1:]
+            cwd = self.cwd_fn()
+            entries = self._refresh_cache(cwd)
+            count = 0
+            for rel in entries:
+                if count >= self._MAX_RESULTS:
+                    break
+                rel_lower = rel.lower()
+                if rel_lower.startswith(partial) or (partial and partial in rel_lower):
+                    full = cwd / rel.replace("/", os.sep)
+                    meta = ""
+                    try:
+                        if full.is_dir():
+                            meta = "dir"
+                        else:
+                            meta = self._file_size(full)
+                    except (OSError, PermissionError):
+                        pass
+                    yield Completion(
+                        rel,
+                        start_position=-len(raw_partial),
+                        display=rel,
+                        display_meta=meta,
+                    )
+                    count += 1
+
+        @staticmethod
+        def _file_size(p: Path) -> str:
+            try:
+                size = p.stat().st_size
+                if size < 1024:
+                    return f"{size}B"
+                if size < 1024 * 1024:
+                    return f"{size // 1024}KB"
+                return f"{size // (1024 * 1024)}MB"
+            except (OSError, PermissionError):
+                return ""
+
+
+    class _CommandCompleter(Completer):  # type: ignore[misc]
+        """Autocomplete / slash commands."""
+
+        _COMMANDS = [
+            "/help", "/exit", "/compose", "/status", "/new", "/load",
+            "/sessions", "/history", "/clear", "/cd", "/tools",
+            "/backend", "/models", "/model", "/reasoning", "/rounds",
+            "/autoresearch", "/research", "/codex-login",
+        ]
+
+        def get_completions(self, document, complete_event):
+            text = document.text_before_cursor.lstrip()
+            if not text.startswith("/"):
+                return
+            if " " in text:
+                return
+            for cmd in self._COMMANDS:
+                if cmd.startswith(text.lower()):
+                    yield Completion(cmd, start_position=-len(text))
+
+
+    class _MergedCompleter(Completer):  # type: ignore[misc]
+        """Merges @-file and /command completers."""
+
+        def __init__(self, completers: list[Completer]):
+            self.completers = completers
+
+        def get_completions(self, document, complete_event):
+            for completer in self.completers:
+                yield from completer.get_completions(document, complete_event)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Prompt construction
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1992,7 +2256,6 @@ def _build_prompt_prefix(state: TUIState) -> str:
     """Build the styled prompt prefix — compact and clean."""
     backend_short = "cdx" if state.backend == "codex" else "oai"
     session_short = state.session_id.split("-")[-1][:6]
-    # Show working directory basename for context
     cwd_name = state.cwd.name or str(state.cwd)
     return (
         f"{C_DIM}{cwd_name}{RESET}"
@@ -2002,6 +2265,53 @@ def _build_prompt_prefix(state: TUIState) -> str:
         f"{C_DIM}:{RESET}"
         f"{C_VALUE}{session_short}{RESET}"
         f" {C_PROMPT_ARROW}❯{RESET} "
+    )
+
+
+def _build_prompt_prefix_html(state: TUIState) -> str:
+    """Build prompt prefix using prompt_toolkit HTML formatting."""
+    backend_short = "cdx" if state.backend == "codex" else "oai"
+    session_short = state.session_id.split("-")[-1][:6]
+    cwd_name = state.cwd.name or str(state.cwd)
+    return (
+        f'<style fg="#646478">{cwd_name}</style>'
+        f' <style fg="#a78bfa" bold="true">mtp</style>'
+        f'<style fg="#646478">:</style>'
+        f'<style fg="#46a0be">{backend_short}</style>'
+        f'<style fg="#646478">:</style>'
+        f'<style fg="#6ee7b7">{session_short}</style>'
+        f' <style fg="#a78bfa">❯</style> '
+    )
+
+
+def _build_bottom_toolbar(state: TUIState) -> str:
+    """Build the persistent bottom status toolbar (prompt_toolkit HTML format).
+
+    Design: single muted palette, clean dot separators, readable shortcuts.
+    """
+    model = _active_model_name(state)
+    turns = len(state.transcript)
+    reasoning = state.reasoning_effort
+    backend = state.backend
+
+    d = '#6b6b80'  # dim label
+    v = '#9d9db5'  # value (slightly brighter, same hue)
+    sep = f'<style fg="#3d3d50"> · </style>'
+
+    return (
+        f'<style fg="{v}">{model}</style>'
+        f'{sep}'
+        f'<style fg="{d}">reasoning </style><style fg="{v}">{reasoning}</style>'
+        f'{sep}'
+        f'<style fg="{d}">{backend}</style>'
+        f'{sep}'
+        f'<style fg="{d}">turns </style><style fg="{v}">{turns}</style>'
+        f'<style fg="#3d3d50">  │  </style>'
+        f'<style fg="{d}">^C </style><style fg="#7a7a95">stop</style>'
+        f'<style fg="#3d3d50">  </style>'
+        f'<style fg="{d}">^L </style><style fg="#7a7a95">clear</style>'
+        f'<style fg="#3d3d50">  </style>'
+        f'<style fg="{d}">^D </style><style fg="#7a7a95">exit</style>'
     )
 
 
@@ -2040,6 +2350,13 @@ def _compose_multiline_prompt() -> str | None:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Interrupt Handler
+# ─────────────────────────────────────────────────────────────────────────────
+
+_interrupt_requested = threading.Event()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Main Loop
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -2069,12 +2386,79 @@ def run_tui(args) -> int:
     _save_tui_session(state)
     _animate_boot(state)
 
+    # ── Build prompt session (prompt_toolkit or fallback) ────────────────
+    ptk_session = None
+    if _HAS_PROMPT_TOOLKIT:
+        try:
+            history_path = Path.home() / ".mtp" / "history.txt"
+            history_path.parent.mkdir(parents=True, exist_ok=True)
+
+            # Keyboard bindings
+            kb = KeyBindings()
+
+            @kb.add("c-l")
+            def _clear_screen(event):
+                """Ctrl+L: Clear screen and redraw banner."""
+                os.system("cls" if os.name == "nt" else "clear")
+                _print_banner(state)
+
+            completer = _MergedCompleter([
+                _CommandCompleter(),
+                _AtFileCompleter(cwd_fn=lambda: state.cwd),
+            ])
+
+            # prompt_toolkit style — dark theme for menus and toolbar
+            ptk_style = PTKStyle.from_dict({
+                # Bottom toolbar
+                "bottom-toolbar":       "bg:#0e0e1a #6b6b80",
+                "bottom-toolbar.text":  "bg:#0e0e1a #6b6b80",
+                # Completion menu — dark with violet accent
+                "completion-menu":                      "bg:#1a1a2e #b4aae0",
+                "completion-menu.completion":            "bg:#1a1a2e #b4aae0",
+                "completion-menu.completion.current":    "bg:#2d2b55 #e0daf8 bold",
+                "completion-menu.meta":                  "bg:#1a1a2e #646478",
+                "completion-menu.meta.current":          "bg:#2d2b55 #9d9db5",
+                # Scrollbar
+                "scrollbar.background":                 "bg:#1a1a2e",
+                "scrollbar.button":                     "bg:#3d3d60",
+                "scrollbar.arrow":                      "bg:#3d3d60",
+                # Auto-suggest ghost text
+                "auto-suggestion":                      "#3d3d50",
+            })
+
+            ptk_session = PromptSession(
+                history=FileHistory(str(history_path)),
+                auto_suggest=AutoSuggestFromHistory(),
+                completer=completer,
+                complete_while_typing=False,  # Completions on Tab only — no lag
+                key_bindings=kb,
+                style=ptk_style,
+                mouse_support=False,
+            )
+        except Exception:
+            ptk_session = None
+
     while True:
         try:
-            prompt_prefix = _build_prompt_prefix(state)
-            raw = input(prompt_prefix)
-        except (EOFError, KeyboardInterrupt):
-            print(f"\n{C_DIM}Exiting TUI. Goodbye!{RESET}")
+            if ptk_session is not None:
+                # ── prompt_toolkit input with bottom toolbar & completions ──
+                toolbar = lambda: HTML(_build_bottom_toolbar(state))
+                prompt_html = HTML(_build_prompt_prefix_html(state))
+                raw = ptk_session.prompt(
+                    prompt_html,
+                    bottom_toolbar=toolbar,
+                )
+            else:
+                # ── Fallback: plain input() ──
+                prompt_prefix = _build_prompt_prefix(state)
+                raw = input(prompt_prefix)
+        except KeyboardInterrupt:
+            # Ctrl+C at prompt → stay in TUI
+            print(f"\n{C_DIM}Interrupted. Type /exit or press Ctrl+D to quit.{RESET}")
+            continue
+        except EOFError:
+            # Ctrl+D → exit
+            print(f"\n{C_BRAND}Goodbye!{RESET} ✨\n")
             return 0
         raw = _sanitize_paste_artifacts(raw).strip()
         if not raw:
@@ -2104,6 +2488,10 @@ def run_tui(args) -> int:
                     return 0
                 if out:
                     print(f"  {out}")
+                    # Show toast for model/setting changes
+                    stripped_out = _strip_ansi(out)
+                    if stripped_out.startswith("✓") and len(stripped_out) < 80:
+                        _toast(stripped_out, kind="success", duration=2.0)
                 continue
 
         expanded_prompt, attachments, attachment_warnings = _collect_prompt_attachments(raw, state.cwd)
@@ -2117,6 +2505,7 @@ def run_tui(args) -> int:
         spinner_preset = "reasoning" if state.reasoning_effort in ("high", "xhigh") else "default"
         spinner = _Spinner(label="Thinking", preset=spinner_preset)
         spinner.start()
+        _interrupt_requested.clear()
         try:
             if state.backend == "codex":
                 result = _run_codex_prompt(state, expanded_prompt)
@@ -2126,10 +2515,15 @@ def run_tui(args) -> int:
                 result = _run_openai_prompt(state, expanded_prompt)
                 result.attachments = attachments
                 result.warnings = [*attachment_warnings, *result.warnings]
+        except KeyboardInterrupt:
+            spinner.stop()
+            print(f"\n  {C_WARNING}⚡ Request interrupted.{RESET}")
+            _toast("Request interrupted", kind="warning", duration=2.0)
+            continue
         except Exception as exc:  # noqa: BLE001
             spinner.stop()
             print(f"  {C_ERROR}✗ Error:{RESET} {exc}")
             continue
         spinner.stop()
         _record_turn(state, raw, result)
-        _render_prompt_and_response(result)
+        _render_prompt_and_response(result, state=state)
