@@ -1,4 +1,4 @@
-# MTPX (Model Tool Protocol Extended)
+ MTPX (Model Tool Protocol Extended)
 
 [![PyPI version](https://badge.fury.io/py/mtpx.svg)](https://pypi.org/project/mtpx/)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
