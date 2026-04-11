@@ -252,6 +252,102 @@ def _render_logo() -> list[str]:
     return lines
 
 
+def _render_logo_gradient_sweep() -> list[str]:
+    """Render the ASCII logo with a horizontal gradient sweep per line."""
+    lines = []
+    for idx, raw_line in enumerate(_LOGO_LINES):
+        rendered = ""
+        for char_idx, ch in enumerate(raw_line):
+            t = char_idx / max(1, len(raw_line) - 1)
+            r = int(167 + t * (70 - 167))
+            g = int(139 + t * (225 - 139))
+            b = int(250 + t * (200 - 250))
+            rendered += f"\033[1;38;2;{r};{g};{b}m{ch}"
+        rendered += RESET
+        lines.append(_centered(rendered))
+    return lines
+
+
+def _animate_boot(state: TUIState) -> None:
+    """Animated boot: sweep logo + stagger-reveal sections."""
+    from mtp import __version__
+    w = _get_term_width()
+    active_model = state.codex_model if state.backend == "codex" else state.openai_model
+
+    print()
+    # Animate logo line-by-line with horizontal gradient sweep
+    for idx, raw_line in enumerate(_LOGO_LINES):
+        rendered = ""
+        for char_idx, ch in enumerate(raw_line):
+            t = char_idx / max(1, len(raw_line) - 1)
+            r = int(167 + t * (70 - 167))
+            g = int(139 + t * (225 - 139))
+            b = int(250 + t * (200 - 250))
+            rendered += f"\033[1;38;2;{r};{g};{b}m{ch}"
+        rendered += RESET
+        sys.stdout.write(_centered(rendered) + "\n")
+        sys.stdout.flush()
+        time.sleep(0.025)
+
+    # Stagger-reveal the info sections
+    info_lines = _build_compact_info(state, __version__, active_model, w)
+    for line in info_lines:
+        # Quick fade: dim → normal
+        sys.stdout.write(f"\r{DIM}{line}{RESET}")
+        sys.stdout.flush()
+        time.sleep(0.015)
+        sys.stdout.write(f"\r{line}")
+        sys.stdout.flush()
+        sys.stdout.write("\n")
+    sys.stdout.flush()
+
+
+def _build_compact_info(state: TUIState, version: str, active_model: str | None, w: int) -> list[str]:
+    """Build compact info lines for banner/boot."""
+    lines: list[str] = []
+
+    # Tagline
+    tagline = f"{C_DIM}Model Tool Protocol{RESET}  {C_BRAND_BOLD}v{version}{RESET}  {C_DIM}·  SDK + Codex CLI bridge{RESET}"
+    lines.append(_centered(tagline))
+    lines.append("")  # single blank
+
+    # Thin rule
+    rule_w = min(60, w - 4)
+    rule_pad = max(0, (w - rule_w) // 2)
+    lines.append(f"{' ' * rule_pad}{C_BORDER}{'─' * rule_w}{RESET}")
+    lines.append("")  # single blank
+
+    # Model + Reasoning — compact inline
+    model_display = active_model or "(default)"
+    model_line = f"  {C_LABEL}model{RESET}  {C_MODEL}{model_display}{RESET}"
+    # Add model dots
+    for idx, (m, _desc) in enumerate(_MODEL_PRESETS, start=1):
+        selected = m in {state.codex_model, state.openai_model}
+        dot = f"{C_SUCCESS}●{RESET}" if selected else f"{C_DIM}○{RESET}"
+        model_line += f"  {dot}"
+    model_line += f"    {C_LABEL}reasoning{RESET}  {C_VALUE}{state.reasoning_effort}{RESET}"
+    model_line += f"    {C_LABEL}backend{RESET}  {C_ACCENT}{state.backend}{RESET}"
+    lines.append(model_line)
+
+    # Session — compact single line
+    sid_short = state.session_id.split("-")[-1][:8]
+    session_line = f"  {C_DIM}session{RESET} {C_VALUE}{sid_short}{RESET}"
+    session_line += f"  {C_DIM}cwd{RESET} {C_TEXT}{state.cwd}{RESET}"
+    session_line += f"  {C_DIM}turns{RESET} {C_VALUE}{len(state.transcript)}{RESET}"
+    lines.append(session_line)
+
+    lines.append("")  # single blank
+
+    # Tips — compact
+    lines.append(f"  {C_DIM}type{RESET} {C_CMD}/help{RESET} {C_DIM}for commands  ·{RESET}  {C_ACCENT}@file{RESET} {C_DIM}to attach  ·{RESET}  {C_CMD}/model 1-4{RESET} {C_DIM}to switch{RESET}")
+
+    lines.append("")  # single blank
+    # Bottom thin rule
+    lines.append(f"{' ' * rule_pad}{C_BORDER}{'─' * rule_w}{RESET}")
+    lines.append("")  # trailing blank
+    return lines
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Data classes
 # ─────────────────────────────────────────────────────────────────────────────
@@ -307,127 +403,13 @@ def _print_banner(state: TUIState) -> None:
     w = _get_term_width()
 
     print()
-    # Top border
-    print(_box_top(w))
+    # Gradient sweep logo (static for /clear redraw)
+    for line in _render_logo_gradient_sweep():
+        print(line)
 
-    # Empty padding line
-    print(_box_line("", w))
-
-    # Render logo
-    for logo_line in _render_logo():
-        # Re-center inside box
-        visible = _strip_ansi(logo_line).strip()
-        inner_w = w - 4
-        pad = max(0, (inner_w - len(visible)) // 2)
-        # Rebuild with color
-        idx = _render_logo().index(logo_line) if False else 0
-        print(_box_line(" " * pad + logo_line.strip(), w))
-
-    # Tagline
-    print(_box_line("", w))
-    tagline = f"{C_DIM}Model Tool Protocol{RESET}  {C_BRAND_BOLD}v{__version__}{RESET}"
-    tagline_vis = _strip_ansi(tagline)
-    tag_pad = max(0, (w - 4 - len(tagline_vis)) // 2)
-    print(_box_line(" " * tag_pad + tagline, w))
-    subtitle = f"{C_DIM}Interactive terminal UI · SDK + Codex CLI bridge{RESET}"
-    sub_vis = _strip_ansi(subtitle)
-    sub_pad = max(0, (w - 4 - len(sub_vis)) // 2)
-    print(_box_line(" " * sub_pad + subtitle, w))
-    print(_box_line("", w))
-
-    # Separator
-    print(_box_separator(w))
-    print(_box_line("", w))
-
-    # Models section
-    model_header = f"  {C_LABEL}{'Models'}{RESET}"
-    print(_box_line(model_header, w))
-    for idx, (model, desc) in enumerate(_MODEL_PRESETS, start=1):
-        selected = model in {state.codex_model, state.openai_model}
-        marker = f" {C_SUCCESS}●{RESET}" if selected else f" {C_DIM}○{RESET}"
-        shortcut = f"{C_KEY}[{idx}]{RESET}"
-        model_name = f"{C_MODEL}{model}{RESET}"
-        description = f"{C_DIM}{desc}{RESET}"
-        print(_box_line(f"  {marker} {shortcut} {model_name}  {description}", w))
-    print(_box_line("", w))
-
-    # Reasoning section
-    reasoning_header = f"  {C_LABEL}{'Reasoning'}{RESET}"
-    print(_box_line(reasoning_header, w))
-    reasoning_items = []
-    for num, name in _REASONING_SHORTCUTS.items():
-        if name == state.reasoning_effort:
-            reasoning_items.append(f"{C_KEY}[{num}]{RESET} {C_SUCCESS}{name}{RESET}")
-        else:
-            reasoning_items.append(f"{C_KEY}[{num}]{RESET} {C_DIM}{name}{RESET}")
-    print(_box_line(f"    {'  '.join(reasoning_items)}", w))
-    print(_box_line("", w))
-
-    # Separator
-    print(_box_separator(w))
-    print(_box_line("", w))
-
-    # Quick Commands section
-    cmd_header = f"  {C_LABEL}{'Commands'}{RESET}"
-    print(_box_line(cmd_header, w))
-    cmds = [
-        (f"{C_CMD}/help{RESET}", "Show full command reference"),
-        (f"{C_CMD}/compose{RESET}", "Multi-line prompt mode"),
-        (f"{C_CMD}/new{RESET}", "Start a new chat"),
-        (f"{C_CMD}/history{RESET}", "Show recent turns"),
-        (f"{C_CMD}/model{RESET}", "Switch model"),
-        (f"{C_CMD}/backend{RESET}", "Switch backend"),
-        (f"{C_CMD}/sessions{RESET}", "List saved chats"),
-        (f"{C_CMD}/status{RESET}", "Show session info"),
-        (f"{C_CMD}/exit{RESET}", "Exit TUI"),
-    ]
-    # Render in 2 columns
-    half = (len(cmds) + 1) // 2
-    for i in range(half):
-        left = cmds[i]
-        right = cmds[i + half] if i + half < len(cmds) else ("", "")
-        left_str = f"    {left[0]}  {C_DIM}{left[1]}{RESET}"
-        right_str = f"    {right[0]}  {C_DIM}{right[1]}{RESET}" if right[0] else ""
-        # We need careful padding for columns
-        left_vis = len(_strip_ansi(left_str))
-        col_w = (w - 4) // 2
-        pad = max(0, col_w - left_vis)
-        print(_box_line(f"{left_str}{' ' * pad}{right_str}", w))
-    print(_box_line("", w))
-
-    # Separator
-    print(_box_separator(w))
-    print(_box_line("", w))
-
-    # Current session info
-    session_header = f"  {C_LABEL}{'Session'}{RESET}"
-    print(_box_line(session_header, w))
-    backend_val = f"{C_SUCCESS}{state.backend}{RESET}" if state.backend == "codex" else f"{C_ACCENT}{state.backend}{RESET}"
-    model_val = f"{C_MODEL}{active_model or '(codex-default)'}{RESET}"
-    reasoning_val = f"{C_VALUE}{state.reasoning_effort}{RESET}"
-    cwd_val = f"{C_TEXT}{state.cwd}{RESET}"
-    session_val = f"{C_VALUE}{state.session_id}{RESET}"
-    turns_val = f"{C_VALUE}{len(state.transcript)}{RESET}"
-
-    print(_box_line(f"    {C_DIM}session{RESET}     {session_val}", w))
-    print(_box_line(f"    {C_DIM}turns{RESET}       {turns_val}", w))
-    print(_box_line(f"    {C_DIM}backend{RESET}     {backend_val}", w))
-    print(_box_line(f"    {C_DIM}model{RESET}       {model_val}", w))
-    print(_box_line(f"    {C_DIM}reasoning{RESET}   {reasoning_val}", w))
-    print(_box_line(f"    {C_DIM}cwd{RESET}         {cwd_val}", w))
-    print(_box_line("", w))
-
-    # Tips
-    print(_box_separator(w))
-    print(_box_line("", w))
-    tip_icon = f"{C_WARNING}💡{RESET}"
-    print(_box_line(f"  {tip_icon} {C_DIM}Include{RESET} {C_ACCENT}@relative/path.py{RESET} {C_DIM}in your prompt to attach file contents.{RESET}", w))
-    print(_box_line(f"  {tip_icon} {C_DIM}Leading{RESET} {C_CMD}/{RESET} {C_DIM}is optional for commands (e.g.{RESET} {C_CMD}codex-login{RESET} {C_DIM}works too).{RESET}", w))
-    print(_box_line("", w))
-
-    # Bottom border
-    print(_box_bottom(w))
-    print()
+    # Compact info
+    for line in _build_compact_info(state, __version__, active_model, w):
+        print(line)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -436,10 +418,12 @@ def _print_banner(state: TUIState) -> None:
 
 def _print_help() -> None:
     w = _get_term_width()
+    rule_w = min(60, w - 4)
+    rule_pad = max(0, (w - rule_w) // 2)
+    thin_rule = f"{' ' * rule_pad}{C_BORDER}{'─' * rule_w}{RESET}"
     print()
-    print(_box_top(w))
-    print(_box_line(f"  {C_BRAND_BOLD}Command Reference{RESET}", w))
-    print(_box_separator(w))
+    print(f"  {C_BRAND_BOLD}Command Reference{RESET}")
+    print(thin_rule)
 
     sections = [
         ("Navigation", [
@@ -469,22 +453,18 @@ def _print_help() -> None:
     ]
 
     for section_name, commands in sections:
-        print(_box_line("", w))
-        print(_box_line(f"  {C_LABEL}{section_name}{RESET}", w))
+        print(f"\n  {C_LABEL}{section_name}{RESET}")
         for cmd, desc in commands:
             cmd_str = f"{C_CMD}{cmd}{RESET}"
             cmd_vis = len(_strip_ansi(cmd_str))
             pad = max(1, 36 - cmd_vis)
-            print(_box_line(f"    {cmd_str}{' ' * pad}{C_DIM}{desc}{RESET}", w))
+            print(f"    {cmd_str}{' ' * pad}{C_DIM}{desc}{RESET}")
 
-    print(_box_line("", w))
-    print(_box_separator(w))
-    print(_box_line("", w))
-    print(_box_line(f"  {C_LABEL}Prompt UX{RESET}", w))
-    print(_box_line(f"    {C_DIM}Type{RESET} {C_ACCENT}@path/to/file.py{RESET} {C_DIM}in a prompt to attach file context.{RESET}", w))
-    print(_box_line(f"    {C_DIM}Example:{RESET} {C_TEXT}explain bug in @src/mtp/cli/tui.py and propose patch{RESET}", w))
-    print(_box_line("", w))
-    print(_box_bottom(w))
+    print()
+    print(thin_rule)
+    print(f"  {C_LABEL}Prompt UX{RESET}")
+    print(f"    {C_DIM}Type{RESET} {C_ACCENT}@path/to/file.py{RESET} {C_DIM}in a prompt to attach file context.{RESET}")
+    print(f"    {C_DIM}Example:{RESET} {C_TEXT}explain bug in @src/mtp/cli/tui.py and propose patch{RESET}")
     print()
 
 
@@ -494,11 +474,12 @@ def _print_help() -> None:
 
 def _print_model_matrix(state: TUIState) -> None:
     w = _get_term_width()
+    rule_w = min(60, w - 4)
+    rule_pad = max(0, (w - rule_w) // 2)
+    thin_rule = f"{' ' * rule_pad}{C_BORDER}{'─' * rule_w}{RESET}"
     print()
-    print(_box_top(w))
-    print(_box_line(f"  {C_BRAND_BOLD}Model Presets{RESET}", w))
-    print(_box_separator(w))
-    print(_box_line("", w))
+    print(f"  {C_BRAND_BOLD}Model Presets{RESET}")
+    print(thin_rule)
 
     for idx, (model, note) in enumerate(_MODEL_PRESETS, start=1):
         selected = model in {state.codex_model, state.openai_model}
@@ -507,31 +488,24 @@ def _print_model_matrix(state: TUIState) -> None:
         model_name = f"{C_MODEL}{model}{RESET}"
         desc = f"{C_DIM}{note}{RESET}"
         sel_tag = f"  {C_SUCCESS}← active{RESET}" if selected else ""
-        print(_box_line(f"    {marker} {shortcut} {model_name}  {desc}{sel_tag}", w))
+        print(f"    {marker} {shortcut} {model_name}  {desc}{sel_tag}")
 
-    print(_box_line("", w))
-    print(_box_separator(w))
-    print(_box_line("", w))
-
-    print(_box_line(f"  {C_LABEL}Reasoning Levels{RESET}", w))
+    print()
+    print(f"  {C_LABEL}Reasoning Levels{RESET}")
     reasoning_items = []
     for num, name in _REASONING_SHORTCUTS.items():
         if name == state.reasoning_effort:
             reasoning_items.append(f"{C_KEY}[{num}]{RESET} {C_SUCCESS}{name}{RESET}")
         else:
             reasoning_items.append(f"{C_KEY}[{num}]{RESET} {C_DIM}{name}{RESET}")
-    print(_box_line(f"      {'   '.join(reasoning_items)}", w))
+    print(f"      {'   '.join(reasoning_items)}")
 
-    print(_box_line("", w))
-    print(_box_separator(w))
-    print(_box_line("", w))
-    print(_box_line(f"  {C_LABEL}Model-Specific Notes{RESET}", w))
+    print()
+    print(f"  {C_LABEL}Model-Specific Notes{RESET}")
     for model_key, notes in _REASONING_NOTES.items():
-        print(_box_line(f"    {C_MODEL}{model_key}{RESET} {C_DIM}→{RESET} {C_VALUE}{notes}{RESET}", w))
-    print(_box_line("", w))
-    print(_box_line(f"  {C_DIM}Usage:{RESET} {C_CMD}/model 3{RESET} {C_DIM}and{RESET} {C_CMD}/reasoning high{RESET}  {C_DIM}or{RESET}  {C_CMD}/model gpt-5.4-mini{RESET}", w))
-    print(_box_line("", w))
-    print(_box_bottom(w))
+        print(f"    {C_MODEL}{model_key}{RESET} {C_DIM}→{RESET} {C_VALUE}{notes}{RESET}")
+    print()
+    print(f"  {C_DIM}Usage:{RESET} {C_CMD}/model 3{RESET} {C_DIM}and{RESET} {C_CMD}/reasoning high{RESET}  {C_DIM}or{RESET}  {C_CMD}/model gpt-5.4-mini{RESET}")
     print()
 
 
@@ -980,21 +954,14 @@ def _shorten_text(text: str, limit: int = 160) -> str:
 
 
 def _emit_live_event(kind: str, message: str) -> None:
-    color = C_DIM
-    label = "event"
-    if kind == "tool":
-        color = C_LABEL
-        label = "tool"
-    elif kind == "warn":
-        color = C_WARNING
-        label = "warn"
-    elif kind == "status":
-        color = C_ACCENT
-        label = "status"
-    elif kind == "step":
-        color = C_VALUE
-        label = "step"
-    print(f"  {color}[{label}]{RESET} {C_TEXT}{message}{RESET}")
+    icons = {
+        "tool": f"{C_LABEL}⚙{RESET}",
+        "warn": f"{C_WARNING}⚠{RESET}",
+        "status": f"{C_ACCENT}▸{RESET}",
+        "step": f"{C_VALUE}↳{RESET}",
+    }
+    icon = icons.get(kind, f"{C_DIM}·{RESET}")
+    print(f"  {icon} {C_DIM}{message}{RESET}")
 
 
 def _emit_codex_live_line(raw_line: str, emitted: dict[str, Any]) -> None:
@@ -1469,11 +1436,12 @@ def _status_lines(state: TUIState) -> list[str]:
 
 def _print_status(state: TUIState) -> None:
     w = _get_term_width()
+    rule_w = min(60, w - 4)
+    rule_pad = max(0, (w - rule_w) // 2)
+    thin_rule = f"{' ' * rule_pad}{C_BORDER}{'─' * rule_w}{RESET}"
     print()
-    print(_box_top(w))
-    print(_box_line(f"  {C_BRAND_BOLD}Session Status{RESET}", w))
-    print(_box_separator(w))
-    print(_box_line("", w))
+    print(f"  {C_BRAND_BOLD}Session Status{RESET}")
+    print(thin_rule)
 
     fields = [
         ("session_id", state.session_id, C_VALUE),
@@ -1489,61 +1457,52 @@ def _print_status(state: TUIState) -> None:
         ("reasoning", state.reasoning_effort, C_VALUE),
     ]
     for label, value, color in fields:
-        print(_box_line(f"    {C_LABEL}{label:<20}{RESET} {color}{value}{RESET}", w))
+        print(f"    {C_LABEL}{label:<20}{RESET} {color}{value}{RESET}")
     usage_lines = state.last_usage_lines or ["(none)"]
-    print(_box_line("", w))
-    print(_box_line(f"    {C_LABEL}{'last_usage':<20}{RESET} {C_VALUE}{usage_lines[0]}{RESET}", w))
+    print(f"    {C_LABEL}{'last_usage':<20}{RESET} {C_VALUE}{usage_lines[0]}{RESET}")
     for extra in usage_lines[1:]:
-        print(_box_line(f"    {C_LABEL}{'':<20}{RESET} {C_VALUE}{extra}{RESET}", w))
-
-    print(_box_line("", w))
-    print(_box_bottom(w))
+        print(f"    {C_LABEL}{'':<20}{RESET} {C_VALUE}{extra}{RESET}")
     print()
 
 
 def _print_history(state: TUIState, limit: int | None = None) -> None:
     w = _get_term_width()
+    rule_w = min(60, w - 4)
+    rule_pad = max(0, (w - rule_w) // 2)
+    thin_rule = f"{' ' * rule_pad}{C_BORDER}{'─' * rule_w}{RESET}"
     turns = state.transcript[-limit:] if limit is not None else state.transcript
     print()
-    print(_box_top(w))
-    print(_box_line(f"  {C_BRAND_BOLD}Chat History{RESET}", w))
-    print(_box_separator(w))
+    print(f"  {C_BRAND_BOLD}Chat History{RESET}")
+    print(thin_rule)
     if not turns:
-        print(_box_line("", w))
-        print(_box_line(f"  {C_DIM}No turns yet in this chat.{RESET}", w))
-        print(_box_line("", w))
-        print(_box_bottom(w))
+        print(f"  {C_DIM}No turns yet in this chat.{RESET}")
         print()
         return
     for idx, turn in enumerate(turns, start=max(1, len(state.transcript) - len(turns) + 1)):
-        print(_box_line("", w))
-        meta = f"  {C_LABEL}Turn {idx}{RESET}  {C_DIM}{turn.created_at} · {turn.backend} · {turn.model}{RESET}"
-        print(_box_line(meta, w))
+        meta = f"  {C_LABEL}#{idx}{RESET} {C_DIM}{turn.created_at} · {turn.backend} · {turn.model}{RESET}"
+        print(meta)
         prompt_preview = turn.prompt.replace("\n", " ")
         response_preview = turn.response.replace("\n", " ")
         if len(prompt_preview) > 110:
             prompt_preview = prompt_preview[:107] + "..."
         if len(response_preview) > 110:
             response_preview = response_preview[:107] + "..."
-        print(_box_line(f"    {C_ACCENT}User:{RESET} {C_TEXT}{prompt_preview}{RESET}", w))
-        print(_box_line(f"    {C_SUCCESS}Assistant:{RESET} {C_TEXT}{response_preview}{RESET}", w))
-    print(_box_line("", w))
-    print(_box_bottom(w))
+        print(f"    {C_ACCENT}›{RESET} {C_TEXT}{prompt_preview}{RESET}")
+        print(f"    {C_SUCCESS}◂{RESET} {C_TEXT}{response_preview}{RESET}")
     print()
 
 
 def _print_saved_sessions(state: TUIState) -> None:
     sessions = _list_saved_sessions(state.session_store)
     w = _get_term_width()
+    rule_w = min(60, w - 4)
+    rule_pad = max(0, (w - rule_w) // 2)
+    thin_rule = f"{' ' * rule_pad}{C_BORDER}{'─' * rule_w}{RESET}"
     print()
-    print(_box_top(w))
-    print(_box_line(f"  {C_BRAND_BOLD}Saved Sessions{RESET}", w))
-    print(_box_separator(w))
+    print(f"  {C_BRAND_BOLD}Saved Sessions{RESET}")
+    print(thin_rule)
     if not sessions:
-        print(_box_line("", w))
-        print(_box_line(f"  {C_DIM}No saved sessions yet.{RESET}", w))
-        print(_box_line("", w))
-        print(_box_bottom(w))
+        print(f"  {C_DIM}No saved sessions yet.{RESET}")
         print()
         return
     for record in sessions[:12]:
@@ -1553,13 +1512,10 @@ def _print_saved_sessions(state: TUIState) -> None:
         turn_count = int(tui_meta.get("turn_count") or 0)
         backend = str(tui_meta.get("backend") or "unknown")
         updated = str(tui_meta.get("updated_at") or record.updated_at)
-        active = f" {C_SUCCESS}← active{RESET}" if record.session_id == state.session_id else ""
-        print(_box_line("", w))
-        print(_box_line(f"  {C_VALUE}{record.session_id}{RESET}{active}", w))
-        print(_box_line(f"    {C_TEXT}{label}{RESET}", w))
-        print(_box_line(f"    {C_DIM}{backend} · turns={turn_count} · updated={updated}{RESET}", w))
-    print(_box_line("", w))
-    print(_box_bottom(w))
+        active = f" {C_SUCCESS}● active{RESET}" if record.session_id == state.session_id else ""
+        sid_short = record.session_id.split("-")[-1][:8]
+        print(f"  {C_VALUE}{sid_short}{RESET} {C_TEXT}{label}{RESET}{active}")
+        print(f"    {C_DIM}{backend} · {turn_count} turns · {updated}{RESET}")
     print()
 
 
@@ -1808,18 +1764,30 @@ def _collect_prompt_attachments(prompt: str, cwd: Path) -> tuple[str, list[str],
 # Spinner
 # ─────────────────────────────────────────────────────────────────────────────
 
+_SPINNER_PRESETS = {
+    "reasoning": ("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏", 0.06, "Reasoning"),
+    "streaming": ("▏▎▍▌▋▊▉█▉▊▋▌▍▎▏", 0.05, "Streaming"),
+    "tool":      ("⠿⣿⣷⣶⣦⣤⣀⣤⣦⣶", 0.08, "Running tool"),
+    "search":    ("◐◓◑◒", 0.10, "Searching"),
+    "default":   ("⣾⣽⣻⢿⡿⣟⣯⣷", 0.07, "Thinking"),
+}
+
+
 class _Spinner:
-    """An animated terminal spinner shown while waiting for a response."""
+    """An animated terminal spinner with elapsed time & context-aware presets."""
 
-    _FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
-
-    def __init__(self, label: str = "Thinking"):
-        self._label = label
+    def __init__(self, label: str = "Thinking", preset: str = "default"):
+        preset_data = _SPINNER_PRESETS.get(preset, _SPINNER_PRESETS["default"])
+        self._frames = list(preset_data[0])
+        self._delay = preset_data[1]
+        self._label = label or preset_data[2]
         self._running = False
         self._thread: threading.Thread | None = None
+        self._start_time: float = 0.0
 
     def start(self) -> None:
         self._running = True
+        self._start_time = time.monotonic()
         self._thread = threading.Thread(target=self._spin, daemon=True)
         self._thread.start()
 
@@ -1847,79 +1815,142 @@ class _Spinner:
             _fg_rgb(149, 155, 252),
         ]
         while self._running:
-            frame = self._FRAMES[idx % len(self._FRAMES)]
+            frame = self._frames[idx % len(self._frames)]
             color = spin_colors[idx % len(spin_colors)]
-            elapsed = ""
-            sys.stdout.write(f"\r  {color}{frame}{RESET} {C_DIM}{self._label}...{RESET}{elapsed}")
+            elapsed = time.monotonic() - self._start_time
+            elapsed_str = f" {C_BORDER}{elapsed:.1f}s{RESET}"
+            sys.stdout.write(f"\r  {color}{frame}{RESET} {C_DIM}{self._label}...{RESET}{elapsed_str}")
             sys.stdout.flush()
             idx += 1
-            time.sleep(0.08)
+            time.sleep(self._delay)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Response Rendering
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _apply_inline_markup(text: str) -> str:
+    """Transform **bold**, *italic*, `code`, and URLs to ANSI."""
+    # Inline code first (don't process markup inside)
+    text = re.sub(
+        r"`([^`]+)`",
+        lambda m: f"{C_VALUE}{m.group(1)}{RESET}",
+        text,
+    )
+    # Bold
+    text = re.sub(
+        r"\*\*(.+?)\*\*",
+        lambda m: f"{BOLD}{C_HIGHLIGHT}{m.group(1)}{RESET}",
+        text,
+    )
+    # Italic
+    text = re.sub(
+        r"(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)",
+        lambda m: f"{ITALIC}{C_TEXT}{m.group(1)}{RESET}",
+        text,
+    )
+    # URL highlighting
+    text = re.sub(
+        r"(https?://\S+)",
+        lambda m: f"{UNDERLINE}{C_ACCENT}{m.group(1)}{RESET}",
+        text,
+    )
+    return text
+
+
+def _render_usage_bar(used: int, total: int) -> str:
+    """Render a compact context usage progress bar."""
+    bar_w = 20
+    pct = min(1.0, used / max(1, total))
+    filled = int(pct * bar_w)
+    empty = bar_w - filled
+    # Color shifts: green → yellow → red
+    if pct < 0.6:
+        color = C_SUCCESS
+    elif pct < 0.85:
+        color = C_WARNING
+    else:
+        color = C_ERROR
+    bar = f"{color}{'█' * filled}{C_BORDER}{'░' * empty}{RESET}"
+    pct_str = f"{pct*100:.0f}%"
+    return f"{bar} {color}{pct_str}{RESET} {C_DIM}{used:,}/{total:,}{RESET}"
+
+
 def _render_prompt_and_response(result: ChatResult) -> None:
     w = _get_term_width()
 
+    # Compact metadata line — attachments + tools + warnings on minimal lines
+    meta_parts: list[str] = []
     if result.attachments:
-        print(f"\n  {C_ACCENT}📎 Attachments{RESET}")
-        for item in result.attachments:
-            print(f"     {C_DIM}├─{RESET} {C_TEXT}{item}{RESET}")
-
+        att_list = ", ".join(result.attachments[:3])
+        meta_parts.append(f"{C_ACCENT}📎 {att_list}{RESET}")
     if result.tool_events:
-        print(f"\n  {C_LABEL}🔧 Tools{RESET}")
+        meta_parts.append(f"{C_LABEL}⚙ {len(result.tool_events)} tools{RESET}")
+    if result.warnings:
+        meta_parts.append(f"{C_WARNING}⚠ {len(result.warnings)} warnings{RESET}")
+    if meta_parts:
+        print(f"  {C_DIM}│{RESET} {'  '.join(meta_parts)}")
+
+    # Tool events — compact tree
+    if result.tool_events:
         for i, event in enumerate(result.tool_events):
             connector = "└─" if i == len(result.tool_events) - 1 else "├─"
-            print(f"     {C_DIM}{connector}{RESET} {C_VALUE}{event}{RESET}")
+            print(f"  {C_DIM}│  {connector}{RESET} {C_VALUE}{event}{RESET}")
 
     if result.warnings:
-        print(f"\n  {C_WARNING}⚠  Notes{RESET}")
-        for i, warning in enumerate(result.warnings):
-            connector = "└─" if i == len(result.warnings) - 1 else "├─"
-            print(f"     {C_DIM}{connector}{RESET} {C_WARNING}{warning}{RESET}")
+        for warning in result.warnings:
+            print(f"  {C_DIM}│{RESET}  {C_WARNING}⚠ {warning}{RESET}")
 
-    if result.usage_lines:
-        print(f"\n  {C_LABEL}📊 Usage{RESET}")
-        for i, line in enumerate(result.usage_lines):
-            connector = "└─" if i == len(result.usage_lines) - 1 else "├─"
-            print(f"     {C_DIM}{connector}{RESET} {C_VALUE}{line}{RESET}")
-
-    # Response
+    # Response header
     print()
-    print(f"  {C_RESPONSE}{'─' * 3} Assistant {C_BORDER}{'─' * (w - 18)}{RESET}")
-    print()
+    print(f"  {C_RESPONSE}◂ Assistant{RESET}")
 
-    # Indent and wrap markdown-ish response text for terminal readability.
+    # Indent and wrap markdown-ish response text with inline markup.
     in_code = False
+    code_lang = ""
     body_width = max(30, w - 6)
     for raw_line in result.text.splitlines():
         stripped = raw_line.rstrip("\n")
         if stripped.strip().startswith("```"):
-            in_code = not in_code
-            fence = stripped.strip() or "```"
-            print(f"  {C_VALUE}{fence}{RESET}")
+            if not in_code:
+                in_code = True
+                code_lang = stripped.strip()[3:].strip()
+                lang_label = f" {C_DIM}{code_lang}{RESET}" if code_lang else ""
+                print(f"  {C_BORDER}┌{'─' * 40}{RESET}{lang_label}")
+            else:
+                in_code = False
+                code_lang = ""
+                print(f"  {C_BORDER}└{'─' * 40}{RESET}")
             continue
         if in_code:
-            print(f"  {C_VALUE}{stripped}{RESET}")
+            print(f"  {C_BORDER}│{RESET} {C_VALUE}{stripped}{RESET}")
             continue
         if not stripped.strip():
             print()
             continue
         text = stripped.strip()
         if text.startswith("#"):
+            level = len(text) - len(text.lstrip("#"))
             heading = text.lstrip("#").strip()
-            for part in textwrap.wrap(heading, width=body_width):
-                print(f"  {C_BRAND_BOLD}{part}{RESET}")
+            if level <= 1:
+                for part in textwrap.wrap(heading, width=body_width):
+                    print(f"  {C_BRAND_BOLD}{part}{RESET}")
+            elif level == 2:
+                for part in textwrap.wrap(heading, width=body_width):
+                    print(f"  {BOLD}{C_ACCENT}{part}{RESET}")
+            else:
+                for part in textwrap.wrap(heading, width=body_width):
+                    print(f"  {BOLD}{C_TEXT}{part}{RESET}")
             continue
         bullet_prefix = ""
         bullet_match = re.match(r"^(\d+\.\s+|[-*]\s+)(.+)$", text)
         if bullet_match:
             bullet_prefix = bullet_match.group(1).strip() + " "
             text = bullet_match.group(2).strip()
+        # Apply inline markup
+        text = _apply_inline_markup(text)
         wrapped = textwrap.wrap(
-            text,
+            _strip_ansi(text),
             width=body_width - len(bullet_prefix),
             break_long_words=False,
             replace_whitespace=False,
@@ -1927,12 +1958,29 @@ def _render_prompt_and_response(result: ChatResult) -> None:
         if not wrapped:
             print()
             continue
+        # For wrapped text, re-apply markup to first line (best effort)
         for i, part in enumerate(wrapped):
             prefix = bullet_prefix if i == 0 else " " * len(bullet_prefix)
-            print(f"  {C_TEXT}{prefix}{part}{RESET}")
+            display = _apply_inline_markup(part) if i == 0 else f"{C_TEXT}{part}{RESET}"
+            print(f"  {C_TEXT}{prefix}{RESET}{display}")
 
-    print()
-    print(f"  {C_BORDER}{'─' * (w - 4)}{RESET}")
+    # Usage — compact bottom bar
+    if result.usage_lines:
+        print()
+        # Try to render a context bar from usage lines
+        ctx_match = None
+        for uline in result.usage_lines:
+            m = re.match(r"context_window=([\d,]+)/([\d,]+)", uline)
+            if m:
+                ctx_match = m
+                break
+        if ctx_match:
+            used = int(ctx_match.group(1).replace(",", ""))
+            total = int(ctx_match.group(2).replace(",", ""))
+            print(f"  {C_DIM}ctx{RESET} {_render_usage_bar(used, total)}")
+        else:
+            compact_usage = "  ".join(result.usage_lines[:2])
+            print(f"  {C_DIM}{compact_usage}{RESET}")
     print()
 
 
@@ -1941,11 +1989,14 @@ def _render_prompt_and_response(result: ChatResult) -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _build_prompt_prefix(state: TUIState) -> str:
-    """Build the styled prompt prefix."""
+    """Build the styled prompt prefix — compact and clean."""
     backend_short = "cdx" if state.backend == "codex" else "oai"
     session_short = state.session_id.split("-")[-1][:6]
+    # Show working directory basename for context
+    cwd_name = state.cwd.name or str(state.cwd)
     return (
-        f"{C_BRAND_BOLD}mtp{RESET}"
+        f"{C_DIM}{cwd_name}{RESET}"
+        f" {C_BRAND_BOLD}mtp{RESET}"
         f"{C_DIM}:{RESET}"
         f"{C_ACCENT_DIM}{backend_short}{RESET}"
         f"{C_DIM}:{RESET}"
@@ -2016,7 +2067,7 @@ def run_tui(args) -> int:
         if existing is not None:
             _load_session_into_state(state, existing)
     _save_tui_session(state)
-    _print_banner(state)
+    _animate_boot(state)
 
     while True:
         try:
@@ -2062,9 +2113,10 @@ def run_tui(args) -> int:
             else state.openai_model
         )
 
-        print(
-            f"  {C_DIM}Running on {state.backend} · model={active_model} · reasoning={state.reasoning_effort}{RESET}"
-        )
+        print(f"  {C_DIM}▸ {state.backend} · {active_model} · reasoning={state.reasoning_effort}{RESET}")
+        spinner_preset = "reasoning" if state.reasoning_effort in ("high", "xhigh") else "default"
+        spinner = _Spinner(label="Thinking", preset=spinner_preset)
+        spinner.start()
         try:
             if state.backend == "codex":
                 result = _run_codex_prompt(state, expanded_prompt)
@@ -2075,7 +2127,9 @@ def run_tui(args) -> int:
                 result.attachments = attachments
                 result.warnings = [*attachment_warnings, *result.warnings]
         except Exception as exc:  # noqa: BLE001
+            spinner.stop()
             print(f"  {C_ERROR}✗ Error:{RESET} {exc}")
             continue
+        spinner.stop()
         _record_turn(state, raw, result)
         _render_prompt_and_response(result)
