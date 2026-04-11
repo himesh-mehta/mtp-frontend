@@ -31,6 +31,7 @@ mtp = "mtp.cli.main:main"
 [project.optional-dependencies]
 dotenv = ["python-dotenv"]
 websocket = ["websockets"]
+ui-streamlit = ["streamlit"]
 
 # Provider SDK extras.
 openai = ["openai"]

@@ -175,7 +175,13 @@ my_store = MySQLSessionStore(
 ```bash
 python examples/quickstart.py
 python examples/groq_agent.py
+python examples/groq_agent_events.py
 python examples/mcp_stdio_server.py
+```
+
+```bash
+pip install -e ".[groq,dotenv,ui-streamlit]"
+streamlit run examples/streamlit_groq_agent_chat.py
 ```
 
 ## Docs map
