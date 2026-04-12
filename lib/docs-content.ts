@@ -18,6 +18,9 @@ export interface DocContentBlock {
   items?: string[];
   rows?: string[][];
   headers?: string[];
+  label?: string;
+  output?: string;
+  outputLabel?: string;
 }
 
 export const docSidebar: DocSection[] = [
@@ -34,16 +37,22 @@ export const docSidebar: DocSection[] = [
     items: [
       { slug: "agents", title: "Agents", description: "The orchestration loop that connects models to tools.", content: [] },
       { slug: "execution-plans", title: "Execution Plans", description: "DAG-based structured tool execution.", content: [] },
-      { slug: "tool-registry", title: "Tool Registry", description: "How tools are registered, discovered, and loaded.", content: [] },
       { slug: "runtime", title: "Runtime Engine", description: "Validation, caching, policy, and batch execution.", content: [] },
+    ],
+  },
+  {
+    title: "Tools",
+    items: [
+      { slug: "tool-registry", title: "Overview", description: "How tools are registered, discovered, and loaded.", content: [] },
+      { slug: "toolkits", title: "Built-in Toolkits", description: "Local and web toolkits shipped with MTP.", content: [] },
+      { slug: "creating-tools", title: "Creating Tools", description: "Build custom tools from Python functions.", content: [] },
+      { slug: "mcp-interop", title: "MCP Tools", description: "JSON-RPC adapter for MCP compatibility.", content: [] },
     ],
   },
   {
     title: "Features",
     items: [
-      { slug: "providers", title: "Providers", description: "12+ model adapters with a standard interface.", content: [] },
-      { slug: "toolkits", title: "Built-in Toolkits", description: "Local and web toolkits shipped with MTP.", content: [] },
-      { slug: "creating-tools", title: "Creating Tools", description: "Build custom tools from Python functions.", content: [] },
+      { slug: "providers", title: "Multi-Model Support", description: "12+ model adapters with a standard interface.", content: [] },
       { slug: "policies", title: "Policies & Safety", description: "Risk-aware execution control.", content: [] },
       { slug: "persistence", title: "Persistence", description: "Session storage across JSON, Postgres, and MySQL.", content: [] },
       { slug: "streaming", title: "Streaming & Events", description: "Provider-agnostic event stream contract.", content: [] },
@@ -52,10 +61,18 @@ export const docSidebar: DocSection[] = [
   {
     title: "Advanced",
     items: [
-      { slug: "mcp-interop", title: "MCP Integration", description: "JSON-RPC adapter for MCP compatibility.", content: [] },
       { slug: "transport", title: "Transport Layer", description: "Stdio, HTTP, and WebSocket envelope transports.", content: [] },
       { slug: "autoresearch", title: "Autoresearch Mode", description: "Persistent execution with explicit termination.", content: [] },
       { slug: "cli", title: "CLI Reference", description: "Scaffold, run, and validate MTP projects.", content: [] },
+    ],
+  },
+  {
+    title: "Cookbook",
+    items: [
+      { slug: "cookbook-calc-to-file", title: "Save Result to File", description: "Chain a calculation into a file write.", content: [] },
+      { slug: "cookbook-multi-step", title: "Multi-Step Chains", description: "DAG dependencies across multiple tools.", content: [] },
+      { slug: "cookbook-safe-agent", title: "Safe Agent Policies", description: "Block destructive actions with risk policies.", content: [] },
+      { slug: "cookbook-memory", title: "Agent With Memory", description: "Persist conversations across sessions.", content: [] },
     ],
   },
   {
@@ -113,15 +130,15 @@ export const docPages: Record<string, DocContentBlock[]> = {
   quickstart: [
     { type: "text", value: "This guide gets you from zero to a running agent in under 3 minutes." },
     { type: "heading", value: "1. Install" },
-    { type: "code", language: "bash", value: `pip install mtpx
+    { type: "code", language: "bash", value: `$ pip install mtpx
 
 # With Groq provider and dotenv
-pip install "mtpx[groq,dotenv]"` },
+$ pip install "mtpx[groq,dotenv]"` },
     { type: "heading", value: "2. Configure API Key" },
     { type: "text", value: "Create a .env file in your project root:" },
     { type: "code", language: "env", value: `GROQ_API_KEY=your_groq_api_key_here` },
     { type: "heading", value: "3. Build Your First Agent" },
-    { type: "code", language: "python", value: `from mtp import Agent
+    { type: "code", language: "python", label: "my_agent.py", value: `from mtp import Agent
 from mtp.providers import Groq
 from mtp.toolkits import CalculatorToolkit, FileToolkit
 
@@ -141,7 +158,12 @@ agent = Agent.MTPAgent(
 )
 
 result = agent.run("Calculate 25*4+10 and list files.", max_rounds=4)
-print(result)` },
+print(result)`, output: `[MTP] Round 1: plan with 2 batches
+✓ calculator.multiply(a=25, b=4) → 100
+✓ calculator.add(a=100, b=10) → 110
+✓ file.list_files(path=".") → ["app.py", ".env", "config.json"]
+
+The result of 25*4+10 is 110. Current files: app.py, .env, config.json.`, outputLabel: "Output" },
     { type: "heading", value: "4. What Happens" },
     { type: "list", value: "", items: [
       "Messages and tool schemas are sent to the provider.",
@@ -156,35 +178,35 @@ print(result)` },
   installation: [
     { type: "text", value: "MTPX is available on PyPI. Python 3.10+ is required." },
     { type: "heading", value: "From PyPI (Recommended)" },
-    { type: "code", language: "bash", value: `pip install mtpx` },
+    { type: "code", language: "bash", value: `$ pip install mtpx` },
     { type: "heading", value: "Common Extras" },
     { type: "code", language: "bash", value: `# Groq + dotenv
-pip install "mtpx[groq,dotenv]"
+$ pip install "mtpx[groq,dotenv]"
 
 # OpenAI + Anthropic
-pip install "mtpx[openai,anthropic,dotenv]"
+$ pip install "mtpx[openai,anthropic,dotenv]"
 
 # Web scraping toolkits
-pip install "mtpx[toolkits-web]"
+$ pip install "mtpx[toolkits-web]"
 
 # Database session stores
-pip install "mtpx[stores-db]"
+$ pip install "mtpx[stores-db]"
 
 # Everything
-pip install "mtpx[all]"` },
+$ pip install "mtpx[all]"` },
     { type: "heading", value: "From Source" },
-    { type: "code", language: "bash", value: `git clone https://github.com/yourusername/MTP.git
-cd MTP
-python -m venv .venv
-.venv\\Scripts\\activate   # Windows
-pip install -e .` },
+    { type: "code", language: "bash", value: `$ git clone https://github.com/yourusername/MTP.git
+$ cd MTP
+$ python -m venv .venv
+$ .venv\\Scripts\\activate   # Windows
+$ pip install -e .` },
     { type: "heading", value: "Verify" },
-    { type: "code", language: "bash", value: `python -c "import mtp; print(f'MTPX {mtp.__version__} installed')"` },
+    { type: "code", language: "bash", value: `$ python -c "import mtp; print(f'MTPX {mtp.__version__} installed')"` },
     { type: "heading", value: "CLI Bootstrap (Optional)" },
     { type: "text", value: "Scaffold a starter project instead of building manually:" },
-    { type: "code", language: "bash", value: `mtp new my_agent --template minimal
-cd my_agent
-mtp run` },
+    { type: "code", language: "bash", value: `$ mtp new my_agent --template minimal
+$ cd my_agent
+$ mtp run` },
   ],
 
   // ────────────────────────────────────────────────────────────
@@ -706,5 +728,213 @@ agent.continue_run(run_output=previous_output)` },
       "MCP is a protocol adapter boundary (JSON-RPC in/out). It delegates to runtime.",
     ]},
     { type: "callout", calloutType: "note", value: "MTP protocol and MTP Agent SDK are distinct layers in the same project. MCP support is an interoperability capability, not the product identity." },
+  ],
+
+  // ────────────────────────────────────────────────────────────
+  // COOKBOOK
+  // ────────────────────────────────────────────────────────────
+
+  "cookbook-calc-to-file": [
+    { type: "text", value: "This recipe shows how to chain a calculation result into a file write using MTP's dependency resolution. The model generates a plan where the second tool call references the output of the first." },
+    { type: "heading", value: "Problem" },
+    { type: "text", value: "You want the agent to compute a value and then save that result to a file — without hardcoding the intermediate value." },
+    { type: "heading", value: "Code" },
+    { type: "code", language: "python", label: "agent_calc_write.py", value: `from mtp import Agent
+from mtp.providers import Groq
+from mtp.toolkits import CalculatorToolkit, FileToolkit
+
+Agent.load_dotenv_if_available()
+
+tools = Agent.ToolRegistry()
+tools.register_toolkit_loader("calculator", CalculatorToolkit())
+tools.register_toolkit_loader("file", FileToolkit(base_dir="."))
+
+agent = Agent.MTPAgent(
+    provider=Groq(model="llama-3.3-70b-versatile"),
+    tools=tools,
+    instructions="Use tools. Be concise.",
+    strict_dependency_mode=True,
+)
+
+result = agent.run(
+    "Calculate (25 * 4) + 10 and save the result to output.txt",
+    max_rounds=4,
+)
+print(result)`, output: `[MTP] Plan received: 2 batches
+[MTP] Batch 1 (parallel): calculator.multiply(a=25, b=4)
+[MTP] Batch 2 (sequential): calculator.add(a=$ref:call_1, b=10) → file.write_file(path="output.txt", content=$ref:call_2)
+
+✓ calculator.multiply → 100
+✓ calculator.add → 110
+✓ file.write_file → wrote 3 bytes to output.txt
+
+The result of (25 × 4) + 10 = 110 has been saved to output.txt.`, outputLabel: "Result" },
+    { type: "heading", value: "How It Works" },
+    { type: "list", value: "", items: [
+      "The model generates an ExecutionPlan with dependency references ($ref).",
+      "Batch 1 runs calculator.multiply first.",
+      "Batch 2 resolves $ref:call_1 to 100, then passes 110 to file.write_file.",
+      "strict_dependency_mode ensures the model cannot guess intermediate values.",
+    ]},
+    { type: "callout", calloutType: "tip", value: "Enable debug_mode=True to see the full execution plan JSON in your terminal." },
+  ],
+
+  "cookbook-multi-step": [
+    { type: "text", value: "This recipe demonstrates multi-step tool chaining where output from one toolkit flows into another through DAG dependencies." },
+    { type: "heading", value: "Problem" },
+    { type: "text", value: "You want to read a config file, extract a value, compute something with it, and write the result back — all in one agent call." },
+    { type: "heading", value: "Execution Plan" },
+    { type: "text", value: "The model generates this plan automatically:" },
+    { type: "code", language: "json", label: "Generated ExecutionPlan", value: `{
+  "batches": [
+    {
+      "mode": "parallel",
+      "calls": [
+        {
+          "id": "read_cfg",
+          "name": "file.read_file",
+          "arguments": { "path": "config.json" }
+        }
+      ]
+    },
+    {
+      "mode": "sequential",
+      "calls": [
+        {
+          "id": "compute",
+          "name": "calculator.multiply",
+          "arguments": { "a": { "$ref": "read_cfg" }, "b": 2 },
+          "depends_on": ["read_cfg"]
+        },
+        {
+          "id": "save",
+          "name": "file.write_file",
+          "arguments": {
+            "path": "doubled.txt",
+            "content": { "$ref": "compute" }
+          },
+          "depends_on": ["compute"]
+        }
+      ]
+    }
+  ]
+}`, output: `✓ file.read_file("config.json") → "42"
+✓ calculator.multiply(42, 2) → 84
+✓ file.write_file("doubled.txt", "84") → wrote 2 bytes`, outputLabel: "Execution trace" },
+    { type: "heading", value: "Key Concepts" },
+    { type: "list", value: "", items: [
+      "Batch 1 runs independently — reads the config file.",
+      "Batch 2 is sequential — each call depends on the previous.",
+      "$ref values are resolved by the runtime before the tool handler executes.",
+      "The model never sees raw intermediate values — only structured references.",
+    ]},
+    { type: "callout", calloutType: "note", value: "Validation rules enforce: no duplicate IDs, no missing deps, and no cycles. Invalid plans are rejected before any tool runs." },
+  ],
+
+  "cookbook-safe-agent": [
+    { type: "text", value: "This recipe shows how MTP's policy engine prevents destructive actions and requires human approval for risky operations." },
+    { type: "heading", value: "Problem" },
+    { type: "text", value: "You want the agent to read files freely but block any file deletion or shell command unless a human approves." },
+    { type: "heading", value: "Code" },
+    { type: "code", language: "python", label: "safe_agent.py", value: `from mtp import Agent
+from mtp.providers import Groq
+from mtp.toolkits import FileToolkit, ShellToolkit
+
+tools = Agent.ToolRegistry()
+tools.register_toolkit_loader("file", FileToolkit(base_dir="."))
+tools.register_toolkit_loader("shell", ShellToolkit(base_dir="."))
+
+def approval_handler(tool_name, arguments, risk_level):
+    print(f"⚠️  APPROVAL NEEDED: {tool_name}")
+    print(f"   Risk: {risk_level}")
+    print(f"   Args: {arguments}")
+    answer = input("   Allow? (y/n): ")
+    return answer.lower() == "y"
+
+agent = Agent.MTPAgent(
+    provider=Groq(model="llama-3.3-70b-versatile"),
+    tools=tools,
+    instructions="Use tools as needed.",
+)
+
+# The runtime will pause before destructive tools
+result = agent.run(
+    "Delete the temp folder and list remaining files",
+    max_rounds=4,
+)
+print(result)`, output: `[MTP] Plan: shell.run_command(command="rm -rf temp/") → file.list_files(path=".")
+
+⚠️  APPROVAL NEEDED: shell.run_command
+   Risk: destructive
+   Args: {"command": "rm -rf temp/"}
+   Allow? (y/n): n
+
+[MTP] tool shell.run_command DENIED by policy (skipped)
+✓ file.list_files → ["config.json", "output.txt", "temp/"]
+
+I was unable to delete the temp folder as the operation was denied.
+The current files are: config.json, output.txt, temp/`, outputLabel: "Result (denied)" },
+    { type: "heading", value: "Risk Level Reference" },
+    { type: "table", value: "", headers: ["Level", "Default Policy", "Examples"], rows: [
+      ["read_only", "allow", "file.read_file, calculator.add"],
+      ["write", "allow", "file.write_file"],
+      ["destructive", "ask", "shell.run_command"],
+    ]},
+    { type: "callout", calloutType: "warning", value: "In production, always set an approval_handler. Without one, destructive tools will be blocked by default." },
+  ],
+
+  "cookbook-memory": [
+    { type: "text", value: "This recipe demonstrates session persistence — how an agent can remember context across separate invocations." },
+    { type: "heading", value: "Problem" },
+    { type: "text", value: "You want to tell the agent something in one run, then ask about it in a completely separate run (even after process restart)." },
+    { type: "heading", value: "Code" },
+    { type: "code", language: "python", label: "memory_agent.py", value: `from mtp import Agent, JsonSessionStore
+from mtp.providers import OpenAI
+
+store = JsonSessionStore(db_path="tmp/mtp_sessions")
+
+agent = Agent.MTPAgent(
+    provider=OpenAI(model="gpt-4o"),
+    tools=Agent.ToolRegistry(),
+    session_store=store,
+)
+
+# Run 1: Store information
+agent.run(
+    "Remember: the project codename is Atlas and the deadline is March 15.",
+    session_id="project-chat",
+    user_id="dev-1",
+)
+
+# Run 2: Retrieve information (can be after restart)
+result = agent.run(
+    "What is the project codename and when is the deadline?",
+    session_id="project-chat",
+    user_id="dev-1",
+)
+print(result)`, output: `The project codename is Atlas and the deadline is March 15.`, outputLabel: "Result (Run 2)" },
+    { type: "heading", value: "How It Works" },
+    { type: "list", value: "", items: [
+      "JsonSessionStore saves conversation history to disk as JSON files.",
+      "Each run with the same session_id loads prior messages automatically.",
+      "Works across process restarts — the store is file-based.",
+      "PostgresSessionStore and MySQLSessionStore work the same way for production.",
+    ]},
+    { type: "heading", value: "Stored Data" },
+    { type: "code", language: "json", label: "Session record structure", value: `{
+  "session_id": "project-chat",
+  "user_id": "dev-1",
+  "messages": [
+    {"role": "user", "content": "Remember: the project codename is Atlas..."},
+    {"role": "assistant", "content": "Got it! I'll remember that..."},
+    {"role": "user", "content": "What is the project codename..."},
+    {"role": "assistant", "content": "The project codename is Atlas..."}
+  ],
+  "runs": [
+    {"run_id": "run_abc123", "input": "Remember: ...", "total_tool_calls": 0},
+    {"run_id": "run_def456", "input": "What is ...", "total_tool_calls": 0}
+  ]
+}` },
+    { type: "callout", calloutType: "tip", value: "Use JsonSessionStore for development and PostgresSessionStore for production. The API is identical — just swap the store constructor." },
   ],
 };
