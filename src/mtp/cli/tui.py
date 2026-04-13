@@ -1155,6 +1155,12 @@ def _run_codex_prompt(state: TUIState, prompt: str) -> ChatResult:
             warnings=[],
             usage_lines=[],
         )
+    
+    # Build conversation history from transcript
+    conversation_history: list[tuple[str, str]] = []
+    for turn in state.transcript:
+        conversation_history.append((turn.prompt, turn.response))
+    
     codex_result = codex_backend.run_codex_prompt(
         codex_bin=codex_bin,
         cwd=state.cwd,
@@ -1162,6 +1168,7 @@ def _run_codex_prompt(state: TUIState, prompt: str) -> ChatResult:
         model=state.codex_model,
         reasoning_effort=state.reasoning_effort,
         previous_session_id=state.codex_session_id,
+        conversation_history=conversation_history,  # Pass conversation history
         emit_live=_emit_live_event,
     )
     state.codex_session_id = codex_result.session_id

@@ -170,18 +170,32 @@ def _shorten_text(text: str, limit: int = 160) -> str:
 
 
 def _extract_codex_session_id(event: dict[str, Any], event_type: str) -> str | None:
+    """
+    Enhanced session ID extraction with broader pattern matching.
+    Looks for thread/session/conversation IDs in multiple locations and formats.
+    """
+    # Expanded candidate keys to catch more ID formats
     candidate_keys = (
         "thread_id",
         "session_id",
         "conversation_id",
+        "chat_id",
+        "context_id",
         "id",
+        "threadId",
+        "sessionId",
+        "conversationId",
     )
-    if event_type in {"thread.started", "session.started", "conversation.started"}:
+    
+    # Check top-level keys first for started events
+    if event_type in {"thread.started", "session.started", "conversation.started", "turn.started"}:
         for key in candidate_keys:
             value = event.get(key)
             if isinstance(value, str) and value.strip():
                 return value.strip()
-    nested_keys = ("thread", "session", "conversation", "payload", "item")
+    
+    # Check nested structures
+    nested_keys = ("thread", "session", "conversation", "context", "payload", "item", "data", "metadata")
     for nested_key in nested_keys:
         nested = event.get(nested_key)
         if not isinstance(nested, dict):
@@ -190,6 +204,14 @@ def _extract_codex_session_id(event: dict[str, Any], event_type: str) -> str | N
             value = nested.get(key)
             if isinstance(value, str) and value.strip():
                 return value.strip()
+    
+    # Fallback: check ALL top-level keys for any started event
+    if "started" in event_type or "begin" in event_type:
+        for key in candidate_keys:
+            value = event.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+    
     return None
 
 
@@ -555,6 +577,51 @@ def emit_codex_live_line(raw_line: str, emitted: dict[str, Any], emit: Callable[
     _emit_codex_live_line(raw_line, emitted, emit)
 
 
+def _build_prompt_with_history(
+    current_prompt: str,
+    conversation_history: list[tuple[str, str]],
+    max_turns: int = 5,
+) -> str:
+    """
+    Build a prompt that includes conversation history for context.
+    
+    CRITICAL: Format must look like actual conversation, not instructions/placeholders.
+    Codex needs to see this as real prior messages, not meta-commentary.
+    
+    Args:
+        current_prompt: The current user query
+        conversation_history: List of (user_prompt, assistant_response) tuples
+        max_turns: Maximum number of previous turns to include (default 5)
+    
+    Returns:
+        Formatted prompt with conversation history prepended
+    """
+    if not conversation_history:
+        return current_prompt
+    
+    # Limit to recent turns to avoid token overflow
+    recent_history = conversation_history[-max_turns:] if len(conversation_history) > max_turns else conversation_history
+    
+    # Build conversation history in a natural format
+    # Make it look like actual messages, not meta-instructions
+    history_parts = []
+    
+    for user_msg, assistant_msg in recent_history:
+        # Truncate very long messages to keep prompt manageable
+        user_truncated = user_msg[:500] + "..." if len(user_msg) > 500 else user_msg
+        assistant_truncated = assistant_msg[:800] + "..." if len(assistant_msg) > 800 else assistant_msg
+        
+        # Format as natural conversation continuation
+        history_parts.append(f"User: {user_truncated}")
+        history_parts.append(f"Assistant: {assistant_truncated}")
+        history_parts.append("")  # blank line between exchanges
+    
+    # Add current query as the next user message
+    history_parts.append(f"User: {current_prompt}")
+    
+    return "\n".join(history_parts)
+
+
 def _build_codex_exec_command(
     *,
     codex_bin: str,
@@ -565,25 +632,32 @@ def _build_codex_exec_command(
     reasoning_effort: str,
     session_id: str | None,
 ) -> list[str]:
+    """
+    Build codex exec command with proper syntax for resume vs fresh sessions.
+    
+    CRITICAL: codex exec resume does NOT accept -C flag!
+    - Fresh session: codex exec -C <cwd> [options] <prompt>
+    - Resume session: codex exec resume <session_id> [options] <prompt>
+    """
     if session_id:
+        # Resume command: NO -C flag, working directory is inherited from original session
         cmd = [
             codex_bin,
             "exec",
             "resume",
             session_id,
             "--skip-git-repo-check",
-            "-C",
-            str(cwd),
             "--json",
             "--output-last-message",
             str(output_path),
         ]
     else:
+        # Fresh session: use --cd (or -C) to set working directory
         cmd = [
             codex_bin,
             "exec",
             "--skip-git-repo-check",
-            "-C",
+            "--cd",  # Use --cd instead of -C for clarity
             str(cwd),
             "--json",
             "--output-last-message",
@@ -633,8 +707,25 @@ def run_codex_prompt(
     model: str | None,
     reasoning_effort: str,
     previous_session_id: str | None,
+    conversation_history: list[tuple[str, str]] | None = None,
     emit_live: Callable[[str, str], None] | None = None,
 ) -> CodexRunResult:
+    """
+    Run a Codex prompt with optional conversation history injection.
+    
+    Args:
+        codex_bin: Path to codex executable
+        cwd: Working directory
+        prompt: Current user prompt
+        model: Model name
+        reasoning_effort: Reasoning effort level
+        previous_session_id: Previous Codex session/thread ID for resume
+        conversation_history: List of (user_prompt, assistant_response) tuples for manual history injection
+        emit_live: Optional callback for live event streaming
+    
+    Returns:
+        CodexRunResult with response text, tool events, warnings, usage, and session ID
+    """
     with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".txt", delete=False) as tmp:
         output_path = Path(tmp.name)
 
@@ -645,11 +736,22 @@ def run_codex_prompt(
         emit_live(kind, message)
 
     try:
+        # CRITICAL INSIGHT: codex exec resume maintains Codex's internal thread state,
+        # but our TUI has its own transcript that Codex doesn't know about.
+        # We need to ALWAYS inject history when available, regardless of session ID.
+        
+        # Build prompt with history if we have conversation history
+        effective_prompt = prompt
+        if conversation_history and len(conversation_history) > 0:
+            effective_prompt = _build_prompt_with_history(prompt, conversation_history)
+            if emit_live:
+                emit_live("status", f"Injecting {len(conversation_history)} previous turns for context")
+        
         cmd = _build_codex_exec_command(
             codex_bin=codex_bin,
             cwd=cwd,
             output_path=output_path,
-            prompt=prompt,
+            prompt=effective_prompt,
             model=model,
             reasoning_effort=reasoning_effort,
             session_id=previous_session_id,
@@ -664,12 +766,22 @@ def run_codex_prompt(
         effective_session_id = detected_session_id or previous_session_id
 
         if return_code != 0 and previous_session_id:
-            # Session/thread can expire or become invalid. Retry once as a fresh run.
+            # Session/thread can expire or become invalid. Retry once as a fresh run WITH history injection.
+            if emit_live:
+                emit_live("warn", "Session resume failed, retrying with conversation history injection")
+            
+            # Build prompt with history for the retry
+            retry_prompt = prompt
+            if conversation_history:
+                retry_prompt = _build_prompt_with_history(prompt, conversation_history)
+                if emit_live:
+                    emit_live("status", f"Injecting {len(conversation_history)} previous turns for context")
+            
             fresh_cmd = _build_codex_exec_command(
                 codex_bin=codex_bin,
                 cwd=cwd,
                 output_path=output_path,
-                prompt=prompt,
+                prompt=retry_prompt,
                 model=model,
                 reasoning_effort=reasoning_effort,
                 session_id=None,
