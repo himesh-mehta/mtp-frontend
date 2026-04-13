@@ -6,9 +6,7 @@ import os
 from pathlib import Path
 import re
 import shutil
-import subprocess
 import sys
-import tempfile
 import textwrap
 import threading
 import time
@@ -18,19 +16,54 @@ from uuid import uuid4
 from mtp import Agent, JsonSessionStore, SessionRecord
 from mtp.providers import OpenAI
 from mtp.toolkits.local import register_local_toolkits
+from . import tui_codex_backend as codex_backend
 
-# ── prompt_toolkit (optional, graceful fallback) ─────────────────────────────
+# ── Modular imports (theme, toast, completers) ───────────────────────────────
+from .tui_theme import (
+    # Capability flags
+    UNICODE_ENABLED as _UNICODE_ENABLED,
+    COLOR_ENABLED as _COLOR_ENABLED,
+    # Core escape sequences
+    RESET, BOLD, DIM, ITALIC, UNDERLINE,
+    # Semantic palette
+    C_BRAND, C_BRAND_BOLD, C_ACCENT, C_ACCENT_DIM,
+    C_SUCCESS, C_WARNING, C_ERROR, C_DIM, C_TEXT, C_LABEL,
+    C_HIGHLIGHT, C_MODEL, C_CMD, C_KEY, C_VALUE,
+    C_BORDER, C_PROMPT_ARROW, C_RESPONSE,
+    # Symbols (Unicode with ASCII fallbacks)
+    SYM_RULE as _SYM_RULE, SYM_V as _SYM_V,
+    SYM_TL as _SYM_TL, SYM_TR as _SYM_TR,
+    SYM_BL as _SYM_BL, SYM_BR as _SYM_BR,
+    SYM_ML as _SYM_ML, SYM_MR as _SYM_MR,
+    SYM_DOT as _SYM_DOT, SYM_FILLED as _SYM_FILLED,
+    SYM_EMPTY as _SYM_EMPTY, SYM_PROMPT_ARROW as _SYM_PROMPT_ARROW,
+    SYM_INFO as _SYM_INFO, SYM_WARN as _SYM_WARN,
+    SYM_OK as _SYM_OK, SYM_ERR as _SYM_ERR,
+    SYM_BULLET as _SYM_BULLET,
+    # Drawing primitives
+    get_term_width as _get_term_width,
+    strip_ansi as _strip_ansi,
+    hrule as _hrule,
+    centered as _centered,
+    box_line as _box_line,
+    box_top as _box_top,
+    box_bottom as _box_bottom,
+    box_separator as _box_separator,
+    shorten_text as _shorten_text,
+    # Color helpers (used in logo rendering)
+    _fg_rgb, _bg_rgb,
+)
+from .tui_toast import toast as _toast
+from .tui_completers import (
+    HAS_PROMPT_TOOLKIT as _HAS_PROMPT_TOOLKIT,
+    build_prompt_session as _build_prompt_session,
+    build_prompt_prefix_html as _build_prompt_prefix_html,
+    build_bottom_toolbar as _build_bottom_toolbar,
+)
 try:
-    from prompt_toolkit import PromptSession
-    from prompt_toolkit.history import FileHistory
-    from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
-    from prompt_toolkit.completion import Completer, Completion
-    from prompt_toolkit.key_binding import KeyBindings
     from prompt_toolkit.formatted_text import HTML
-    from prompt_toolkit.styles import Style as PTKStyle
-    _HAS_PROMPT_TOOLKIT = True
 except ImportError:
-    _HAS_PROMPT_TOOLKIT = False
+    HTML = None  # type: ignore[assignment, misc]
 
 
 _BACKENDS = {"codex", "mtp-openai"}
@@ -77,172 +110,25 @@ _MODEL_CONTEXT_WINDOWS: dict[str, int] = {
 }
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# ANSI / Styling Helpers (zero-dependency)
-# ─────────────────────────────────────────────────────────────────────────────
-
-def _setup_console() -> None:
-    """Configure the console for UTF-8 and ANSI support on Windows."""
-    if sys.platform == "win32":
-        # Set console output code page to UTF-8
-        try:
-            import ctypes
-            kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
-            # SetConsoleOutputCP(65001)  — UTF-8
-            kernel32.SetConsoleOutputCP(65001)
-            # STD_OUTPUT_HANDLE = -11
-            handle = kernel32.GetStdHandle(-11)
-            mode = ctypes.c_ulong()
-            kernel32.GetConsoleMode(handle, ctypes.byref(mode))
-            # ENABLE_VIRTUAL_TERMINAL_PROCESSING = 0x0004
-            kernel32.SetConsoleMode(handle, mode.value | 0x0004)
-        except Exception:
-            pass
-        # Reconfigure stdout to UTF-8
-        try:
-            sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[attr-defined]
-        except Exception:
-            pass
-
-
-_setup_console()
-
-
-def _supports_unicode() -> bool:
-    """Detect whether the terminal can render Unicode box-drawing characters."""
-    try:
-        encoding = (sys.stdout.encoding or "").lower()
-        return encoding in {"utf-8", "utf8", "utf_8"}
-    except Exception:
-        return False
-
-
-_UNICODE_ENABLED = _supports_unicode()
-
-
-def _supports_color() -> bool:
-    """Detect whether the terminal supports ANSI colors."""
-    if os.environ.get("NO_COLOR"):
-        return False
-    if os.environ.get("FORCE_COLOR"):
-        return True
-    if sys.platform == "win32":
-        return True
-    return hasattr(sys.stdout, "isatty") and sys.stdout.isatty()
-
-
-_COLOR_ENABLED = _supports_color()
-
-
-def _sgr(code: str) -> str:
-    """Return an ANSI SGR escape if color is enabled, else empty string."""
-    return f"\033[{code}m" if _COLOR_ENABLED else ""
-
-
-# ── Core colors ──────────────────────────────────────────────────────────────
-
-RESET       = _sgr("0")
-BOLD        = _sgr("1")
-DIM         = _sgr("2")
-ITALIC      = _sgr("3")
-UNDERLINE   = _sgr("4")
-
-# 256-color / truecolor helpers
-def _fg256(n: int) -> str:
-    return _sgr(f"38;5;{n}")
-
-def _bg256(n: int) -> str:
-    return _sgr(f"48;5;{n}")
-
-def _fg_rgb(r: int, g: int, b: int) -> str:
-    return _sgr(f"38;2;{r};{g};{b}")
-
-def _bg_rgb(r: int, g: int, b: int) -> str:
-    return _sgr(f"48;2;{r};{g};{b}")
-
-
-# ── Semantic palette ─────────────────────────────────────────────────────────
-# A rich purple/violet → cyan gradient feel, modern dark-terminal aesthetic.
-
-C_BRAND         = _fg_rgb(167, 139, 250)   # Soft violet  — primary brand
-C_BRAND_BOLD    = BOLD + _fg_rgb(167, 139, 250)
-C_ACCENT        = _fg_rgb(99, 220, 255)    # Electric cyan — accent
-C_ACCENT_DIM    = _fg_rgb(70, 160, 190)    # Muted cyan
-C_SUCCESS       = _fg_rgb(52, 211, 153)    # Mint green   — success/active
-C_WARNING       = _fg_rgb(251, 191, 36)    # Amber        — warnings
-C_ERROR         = _fg_rgb(248, 113, 113)   # Soft red     — errors
-C_DIM           = _fg_rgb(100, 100, 120)   # Muted grey   — secondary text
-C_TEXT          = _fg_rgb(220, 220, 230)    # Off-white    — body text
-C_LABEL         = _fg_rgb(180, 170, 220)   # Lavender     — labels
-C_HIGHLIGHT     = BOLD + _fg_rgb(255, 255, 255)  # Bright white
-C_MODEL         = _fg_rgb(250, 204, 21)    # Gold         — model names
-C_CMD           = _fg_rgb(129, 140, 248)   # Indigo       — commands
-C_KEY           = _fg_rgb(192, 132, 252)   # Purple       — keyboard shortcuts
-C_VALUE         = _fg_rgb(110, 231, 183)   # Seafoam      — values
-C_BORDER        = _fg_rgb(75, 75, 100)     # Dark border
-C_PROMPT_ARROW  = _fg_rgb(167, 139, 250)   # Brand violet for prompt
-C_RESPONSE      = _fg_rgb(196, 181, 253)   # Light violet for assistant label
-
-
-# ── Drawing primitives ───────────────────────────────────────────────────────
-
-def _get_term_width() -> int:
-    try:
-        return os.get_terminal_size().columns
-    except (ValueError, OSError):
-        return 80
-
-
-def _hrule(char: str = "─", color: str = C_BORDER) -> str:
-    w = _get_term_width()
-    return f"{color}{char * w}{RESET}"
-
-
-def _centered(text: str, width: int | None = None, pad_char: str = " ") -> str:
-    """Center raw text (strips ANSI for width calc)."""
-    w = width or _get_term_width()
-    visible = _strip_ansi(text)
-    padding = max(0, (w - len(visible)) // 2)
-    return pad_char * padding + text
-
-
-def _strip_ansi(s: str) -> str:
-    return re.sub(r"\033\[[0-9;]*m", "", s)
-
-
-def _box_line(content: str, width: int | None = None) -> str:
-    """Render a line inside a box with │ borders."""
-    w = (width or _get_term_width()) - 4  # account for "│ " + " │"
-    visible_len = len(_strip_ansi(content))
-    pad = max(0, w - visible_len)
-    return f"{C_BORDER}│{RESET} {content}{' ' * pad} {C_BORDER}│{RESET}"
-
-
-def _box_top(width: int | None = None) -> str:
-    w = (width or _get_term_width()) - 2
-    return f"{C_BORDER}╭{'─' * w}╮{RESET}"
-
-
-def _box_bottom(width: int | None = None) -> str:
-    w = (width or _get_term_width()) - 2
-    return f"{C_BORDER}╰{'─' * w}╯{RESET}"
-
-
-def _box_separator(width: int | None = None) -> str:
-    w = (width or _get_term_width()) - 2
-    return f"{C_BORDER}├{'─' * w}┤{RESET}"
-
-
 # ── ASCII Art Logo ───────────────────────────────────────────────────────────
 
-_LOGO_LINES = [
-    r"  ███╗   ███╗ ████████╗ ██████╗  ",
-    r"  ████╗ ████║ ╚══██╔══╝ ██╔══██╗ ",
-    r"  ██╔████╔██║    ██║    ██████╔╝ ",
-    r"  ██║╚██╔╝██║    ██║    ██╔═══╝  ",
-    r"  ██║ ╚═╝ ██║    ██║    ██║      ",
-    r"  ╚═╝     ╚═╝    ╚═╝    ╚═╝      ",
-]
+if _UNICODE_ENABLED:
+    _LOGO_LINES = [
+        r"  ███╗   ███╗ ████████╗ ██████╗  ",
+        r"  ████╗ ████║ ╚══██╔══╝ ██╔══██╗ ",
+        r"  ██╔████╔██║    ██║    ██████╔╝ ",
+        r"  ██║╚██╔╝██║    ██║    ██╔═══╝  ",
+        r"  ██║ ╚═╝ ██║    ██║    ██║      ",
+        r"  ╚═╝     ╚═╝    ╚═╝    ╚═╝      ",
+    ]
+else:
+    _LOGO_LINES = [
+        r"  __  __ _____ ____   ",
+        r" |  \/  |_   _|  _ \  ",
+        r" | |\/| | | | | |_) | ",
+        r" | |  | | | | |  __/  ",
+        r" |_|  |_| |_| |_|     ",
+    ]
 
 # Gradient colors for the logo: purple → cyan → mint
 _LOGO_GRADIENT = [
@@ -320,14 +206,17 @@ def _build_compact_info(state: TUIState, version: str, active_model: str | None,
     lines: list[str] = []
 
     # Tagline
-    tagline = f"{C_DIM}Model Tool Protocol{RESET}  {C_BRAND_BOLD}v{version}{RESET}  {C_DIM}·  SDK + Codex CLI bridge{RESET}"
+    tagline = (
+        f"{C_DIM}Model Tool Protocol{RESET}  {C_BRAND_BOLD}v{version}{RESET}  "
+        f"{C_DIM}{_SYM_DOT}  SDK + Codex CLI bridge{RESET}"
+    )
     lines.append(_centered(tagline))
     lines.append("")  # single blank
 
     # Thin rule
     rule_w = min(60, w - 4)
     rule_pad = max(0, (w - rule_w) // 2)
-    lines.append(f"{' ' * rule_pad}{C_BORDER}{'─' * rule_w}{RESET}")
+    lines.append(f"{' ' * rule_pad}{C_BORDER}{_SYM_RULE * rule_w}{RESET}")
     lines.append("")  # single blank
 
     # Model + Reasoning — compact inline
@@ -336,7 +225,7 @@ def _build_compact_info(state: TUIState, version: str, active_model: str | None,
     # Add model dots
     for idx, (m, _desc) in enumerate(_MODEL_PRESETS, start=1):
         selected = m in {state.codex_model, state.openai_model}
-        dot = f"{C_SUCCESS}●{RESET}" if selected else f"{C_DIM}○{RESET}"
+        dot = f"{C_SUCCESS}{_SYM_FILLED}{RESET}" if selected else f"{C_DIM}{_SYM_EMPTY}{RESET}"
         model_line += f"  {dot}"
     model_line += f"    {C_LABEL}reasoning{RESET}  {C_VALUE}{state.reasoning_effort}{RESET}"
     model_line += f"    {C_LABEL}backend{RESET}  {C_ACCENT}{state.backend}{RESET}"
@@ -352,11 +241,15 @@ def _build_compact_info(state: TUIState, version: str, active_model: str | None,
     lines.append("")  # single blank
 
     # Tips — compact
-    lines.append(f"  {C_DIM}type{RESET} {C_CMD}/help{RESET} {C_DIM}for commands  ·{RESET}  {C_ACCENT}@file{RESET} {C_DIM}to attach  ·{RESET}  {C_CMD}/model 1-4{RESET} {C_DIM}to switch{RESET}")
+    lines.append(
+        f"  {C_DIM}type{RESET} {C_CMD}/help{RESET} {C_DIM}for commands  "
+        f"{_SYM_DOT}{RESET}  {C_ACCENT}@file{RESET} {C_DIM}to attach  "
+        f"{_SYM_DOT}{RESET}  {C_CMD}/model 1-4{RESET} {C_DIM}to switch{RESET}"
+    )
 
     lines.append("")  # single blank
     # Bottom thin rule
-    lines.append(f"{' ' * rule_pad}{C_BORDER}{'─' * rule_w}{RESET}")
+    lines.append(f"{' ' * rule_pad}{C_BORDER}{_SYM_RULE * rule_w}{RESET}")
     lines.append("")  # trailing blank
     return lines
 
@@ -404,6 +297,7 @@ class TUIState:
     user_id: str | None
     agent: Agent.MTPAgent | None = None
     codex_bin: str | None = None
+    codex_session_id: str | None = None
     last_tool_events: list[str] = field(default_factory=list)
     last_warnings: list[str] = field(default_factory=list)
 
@@ -435,7 +329,7 @@ def _print_help() -> None:
     w = _get_term_width()
     rule_w = min(60, w - 4)
     rule_pad = max(0, (w - rule_w) // 2)
-    thin_rule = f"{' ' * rule_pad}{C_BORDER}{'─' * rule_w}{RESET}"
+    thin_rule = f"{' ' * rule_pad}{C_BORDER}{_SYM_RULE * rule_w}{RESET}"
     print()
     print(f"  {C_BRAND_BOLD}Command Reference{RESET}")
     print(thin_rule)
@@ -508,7 +402,7 @@ def _print_model_matrix(state: TUIState) -> None:
     w = _get_term_width()
     rule_w = min(60, w - 4)
     rule_pad = max(0, (w - rule_w) // 2)
-    thin_rule = f"{' ' * rule_pad}{C_BORDER}{'─' * rule_w}{RESET}"
+    thin_rule = f"{' ' * rule_pad}{C_BORDER}{_SYM_RULE * rule_w}{RESET}"
     print()
     print(f"  {C_BRAND_BOLD}Model Presets{RESET}")
     print(thin_rule)
@@ -618,6 +512,7 @@ def _save_tui_session(state: TUIState) -> None:
         "cwd": str(state.cwd),
         "codex_model": state.codex_model,
         "openai_model": state.openai_model,
+        "codex_session_id": state.codex_session_id,
         "reasoning_effort": state.reasoning_effort,
         "max_rounds": state.max_rounds,
         "autoresearch": state.autoresearch,
@@ -652,6 +547,7 @@ def _reset_chat(
     state.transcript = []
     state.last_usage_lines = []
     state.agent = None
+    state.codex_session_id = None
     if not preserve_settings:
         state.backend = "codex"
         state.codex_model = "gpt-5.3-codex"
@@ -700,6 +596,11 @@ def _load_session_into_state(state: TUIState, record: SessionRecord) -> None:
         state.codex_model = codex_model
     if isinstance(openai_model, str) and openai_model:
         state.openai_model = openai_model
+    codex_session_id = tui_meta.get("codex_session_id")
+    if isinstance(codex_session_id, str) and codex_session_id.strip():
+        state.codex_session_id = codex_session_id.strip()
+    else:
+        state.codex_session_id = None
     cwd_raw = tui_meta.get("cwd")
     if isinstance(cwd_raw, str):
         candidate = Path(cwd_raw).expanduser()
@@ -987,12 +888,12 @@ def _shorten_text(text: str, limit: int = 160) -> str:
 
 def _emit_live_event(kind: str, message: str) -> None:
     icons = {
-        "tool": f"{C_LABEL}⚙{RESET}",
-        "warn": f"{C_WARNING}⚠{RESET}",
-        "status": f"{C_ACCENT}▸{RESET}",
-        "step": f"{C_VALUE}↳{RESET}",
+        "tool": f"{C_LABEL}{_SYM_BULLET}{RESET}",
+        "warn": f"{C_WARNING}{_SYM_WARN}{RESET}",
+        "status": f"{C_ACCENT}>{RESET}",
+        "step": f"{C_VALUE}->{RESET}",
     }
-    icon = icons.get(kind, f"{C_DIM}·{RESET}")
+    icon = icons.get(kind, f"{C_DIM}{_SYM_DOT}{RESET}")
     print(f"  {icon} {C_DIM}{message}{RESET}")
 
 
@@ -1237,7 +1138,7 @@ def _extract_codex_tool_signal_details(
 
 
 def _run_codex_prompt(state: TUIState, prompt: str) -> ChatResult:
-    codex_bin = state.codex_bin or _detect_codex_bin()
+    codex_bin = state.codex_bin or codex_backend.detect_codex_bin()
     state.codex_bin = codex_bin
     if not codex_bin:
         return ChatResult(
@@ -1251,99 +1152,34 @@ def _run_codex_prompt(state: TUIState, prompt: str) -> ChatResult:
             warnings=[],
             usage_lines=[],
         )
-
-    with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".txt", delete=False) as tmp:
-        output_path = Path(tmp.name)
-
-    cmd = [
-        codex_bin,
-        "exec",
-        "--skip-git-repo-check",
-        "-C",
-        str(state.cwd),
-        "--json",
-        "--output-last-message",
-        str(output_path),
-    ]
-    if state.codex_model:
-        cmd.extend(["-m", state.codex_model])
-    if state.reasoning_effort in _REASONING_EFFORTS and state.reasoning_effort != "none":
-        cmd.extend(["-c", f'reasoning_effort="{state.reasoning_effort}"'])
-    cmd.append(prompt)
-    proc = subprocess.Popen(
-        cmd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        bufsize=1,
+    codex_result = codex_backend.run_codex_prompt(
+        codex_bin=codex_bin,
+        cwd=state.cwd,
+        prompt=prompt,
+        model=state.codex_model,
+        reasoning_effort=state.reasoning_effort,
+        previous_session_id=state.codex_session_id,
+        emit_live=_emit_live_event,
     )
-    stdout_lines: list[str] = []
-    emitted: dict[str, Any] = {}
-    if proc.stdout is not None:
-        for line in proc.stdout:
-            stdout_lines.append(line)
-            _emit_codex_live_line(line, emitted)
-    return_code = proc.wait()
-    stdout_text = "".join(stdout_lines)
-    text = ""
-    try:
-        if output_path.exists():
-            text = output_path.read_text(encoding="utf-8", errors="replace").strip()
-    finally:
-        try:
-            output_path.unlink(missing_ok=True)
-        except Exception:
-            pass
-
-    parsed_text, tool_events, parse_warnings, usage_lines = _parse_codex_json_events(stdout_text, state.codex_model)
-
-    if return_code != 0:
-        details = stdout_text.strip()
-        hint = "Try: codex login"
-        if details:
-            return ChatResult(
-                text=f"Codex exec failed (exit {return_code}).\n{details}\n{hint}",
-                tool_events=tool_events,
-                attachments=[],
-                warnings=parse_warnings,
-                usage_lines=usage_lines,
-            )
-        return ChatResult(
-            text=f"Codex exec failed (exit {return_code}).\n{hint}",
-            tool_events=tool_events,
-            attachments=[],
-            warnings=parse_warnings,
-            usage_lines=usage_lines,
-        )
-
-    if text:
-        final_text = text
-    elif parsed_text:
-        final_text = parsed_text
-    elif stdout_text.strip():
-        final_text = stdout_text.strip()
-    else:
-        final_text = "(Codex returned no final text.)"
+    state.codex_session_id = codex_result.session_id
     return ChatResult(
-        text=final_text,
-        tool_events=tool_events,
+        text=codex_result.text,
+        tool_events=codex_result.tool_events,
         attachments=[],
-        warnings=parse_warnings,
-        usage_lines=usage_lines,
+        warnings=codex_result.warnings,
+        usage_lines=codex_result.usage_lines,
     )
 
 
 def _run_codex_login(state: TUIState) -> str:
-    codex_bin = state.codex_bin or _detect_codex_bin()
+    codex_bin = state.codex_bin or codex_backend.detect_codex_bin()
     state.codex_bin = codex_bin
     if not codex_bin:
         return "Codex CLI not found on PATH. Install: npm install -g @openai/codex"
-    proc = subprocess.run([codex_bin, "login"], text=True)
-    if proc.returncode == 0:
-        return f"{C_SUCCESS}✓ Codex login completed.{RESET}"
-    return f"{C_ERROR}✗ Codex login exited with code {proc.returncode}.{RESET}"
+    return_code = codex_backend.run_codex_login(codex_bin)
+    if return_code == 0:
+        return f"{C_SUCCESS}{_SYM_OK} Codex login completed.{RESET}"
+    return f"{C_ERROR}{_SYM_ERR} Codex login exited with code {return_code}.{RESET}"
 
 
 def _run_openai_prompt(state: TUIState, prompt: str) -> ChatResult:
@@ -1456,6 +1292,7 @@ def _status_lines(state: TUIState) -> list[str]:
         f"turns={len(state.transcript)}",
         f"backend={state.backend}",
         f"cwd={state.cwd}",
+        f"codex_session_id={state.codex_session_id or '(none)'}",
         f"codex_model={state.codex_model or '(codex-default)'}",
         f"openai_model={state.openai_model}",
         f"max_rounds={state.max_rounds}",
@@ -1470,7 +1307,7 @@ def _print_status(state: TUIState) -> None:
     w = _get_term_width()
     rule_w = min(60, w - 4)
     rule_pad = max(0, (w - rule_w) // 2)
-    thin_rule = f"{' ' * rule_pad}{C_BORDER}{'─' * rule_w}{RESET}"
+    thin_rule = f"{' ' * rule_pad}{C_BORDER}{_SYM_RULE * rule_w}{RESET}"
     print()
     print(f"  {C_BRAND_BOLD}Session Status{RESET}")
     print(thin_rule)
@@ -1481,6 +1318,7 @@ def _print_status(state: TUIState) -> None:
         ("turns", str(len(state.transcript)), C_VALUE),
         ("backend", state.backend, C_SUCCESS),
         ("cwd", str(state.cwd), C_TEXT),
+        ("codex_session", state.codex_session_id or "(none)", C_DIM),
         ("codex_model", state.codex_model or "(codex-default)", C_MODEL),
         ("openai_model", state.openai_model, C_MODEL),
         ("max_rounds", str(state.max_rounds), C_VALUE),
@@ -1501,7 +1339,7 @@ def _print_history(state: TUIState, limit: int | None = None) -> None:
     w = _get_term_width()
     rule_w = min(60, w - 4)
     rule_pad = max(0, (w - rule_w) // 2)
-    thin_rule = f"{' ' * rule_pad}{C_BORDER}{'─' * rule_w}{RESET}"
+    thin_rule = f"{' ' * rule_pad}{C_BORDER}{_SYM_RULE * rule_w}{RESET}"
     turns = state.transcript[-limit:] if limit is not None else state.transcript
     print()
     print(f"  {C_BRAND_BOLD}Chat History{RESET}")
@@ -1511,7 +1349,10 @@ def _print_history(state: TUIState, limit: int | None = None) -> None:
         print()
         return
     for idx, turn in enumerate(turns, start=max(1, len(state.transcript) - len(turns) + 1)):
-        meta = f"  {C_LABEL}#{idx}{RESET} {C_DIM}{turn.created_at} · {turn.backend} · {turn.model}{RESET}"
+        meta = (
+            f"  {C_LABEL}#{idx}{RESET} {C_DIM}{turn.created_at} "
+            f"{_SYM_DOT} {turn.backend} {_SYM_DOT} {turn.model}{RESET}"
+        )
         print(meta)
         prompt_preview = turn.prompt.replace("\n", " ")
         response_preview = turn.response.replace("\n", " ")
@@ -1529,7 +1370,7 @@ def _print_saved_sessions(state: TUIState) -> None:
     w = _get_term_width()
     rule_w = min(60, w - 4)
     rule_pad = max(0, (w - rule_w) // 2)
-    thin_rule = f"{' ' * rule_pad}{C_BORDER}{'─' * rule_w}{RESET}"
+    thin_rule = f"{' ' * rule_pad}{C_BORDER}{_SYM_RULE * rule_w}{RESET}"
     print()
     print(f"  {C_BRAND_BOLD}Saved Sessions{RESET}")
     print(thin_rule)
@@ -1547,7 +1388,7 @@ def _print_saved_sessions(state: TUIState) -> None:
         active = f" {C_SUCCESS}● active{RESET}" if record.session_id == state.session_id else ""
         sid_short = record.session_id.split("-")[-1][:8]
         print(f"  {C_VALUE}{sid_short}{RESET} {C_TEXT}{label}{RESET}{active}")
-        print(f"    {C_DIM}{backend} · {turn_count} turns · {updated}{RESET}")
+        print(f"    {C_DIM}{backend} {_SYM_DOT} {turn_count} turns {_SYM_DOT} {updated}{RESET}")
     print()
 
 
@@ -1595,7 +1436,7 @@ def _handle_command(state: TUIState, raw: str) -> str | None:
     if cmd in {"/new", "/reset"}:
         _reset_chat(state, new_session=True, session_label=arg or None)
         label_text = f" ({arg})" if arg else ""
-        return f"{C_SUCCESS}✓{RESET} Started new chat {C_VALUE}{state.session_id}{RESET}{label_text}."
+        return f"{C_SUCCESS}{_SYM_OK}{RESET} Started new chat {C_VALUE}{state.session_id}{RESET}{label_text}."
     if cmd == "/clear":
         os.system("cls" if os.name == "nt" else "clear")
         _print_banner(state)
@@ -1619,10 +1460,10 @@ def _handle_command(state: TUIState, raw: str) -> str | None:
             return f"{C_WARNING}Usage:{RESET} {C_CMD}/load <session_id>{RESET}"
         record = _load_session_record(state, arg)
         if record is None:
-            return f"{C_ERROR}✗ Session not found:{RESET} {arg}"
+            return f"{C_ERROR}{_SYM_ERR} Session not found:{RESET} {arg}"
         _load_session_into_state(state, record)
         return (
-            f"{C_SUCCESS}✓{RESET} Loaded session {C_VALUE}{state.session_id}{RESET} "
+            f"{C_SUCCESS}{_SYM_OK}{RESET} Loaded session {C_VALUE}{state.session_id}{RESET} "
             f"with {C_VALUE}{len(state.transcript)}{RESET} turns."
         )
     if cmd == "/models":
@@ -1633,7 +1474,7 @@ def _handle_command(state: TUIState, raw: str) -> str | None:
             return f"{C_WARNING}Usage:{RESET} {C_CMD}/backend codex|mtp-openai{RESET}"
         state.backend = arg
         _save_tui_session(state)
-        return f"{C_SUCCESS}✓{RESET} Switched backend to {C_VALUE}{arg}{RESET}."
+        return f"{C_SUCCESS}{_SYM_OK}{RESET} Switched backend to {C_VALUE}{arg}{RESET}."
     if cmd == "/model":
         if not arg:
             _print_model_matrix(state)
@@ -1643,14 +1484,14 @@ def _handle_command(state: TUIState, raw: str) -> str | None:
             if resolved.lower() in {"default", "auto"}:
                 state.codex_model = None
                 _save_tui_session(state)
-                return f"{C_SUCCESS}✓{RESET} Codex model reset to CLI default."
+                return f"{C_SUCCESS}{_SYM_OK}{RESET} Codex model reset to CLI default."
             state.codex_model = resolved
             _save_tui_session(state)
-            return f"{C_SUCCESS}✓{RESET} Codex model set to {C_MODEL}{resolved}{RESET}."
+            return f"{C_SUCCESS}{_SYM_OK}{RESET} Codex model set to {C_MODEL}{resolved}{RESET}."
         state.openai_model = resolved
         state.agent = None
         _save_tui_session(state)
-        return f"{C_SUCCESS}✓{RESET} OpenAI model set to {C_MODEL}{resolved}{RESET}. Agent reloaded."
+        return f"{C_SUCCESS}{_SYM_OK}{RESET} OpenAI model set to {C_MODEL}{resolved}{RESET}. Agent reloaded."
     if cmd == "/reasoning":
         if not arg:
             return f"{C_WARNING}Usage:{RESET} {C_CMD}/reasoning <none|low|medium|high|xhigh>{RESET}"
@@ -1660,7 +1501,7 @@ def _handle_command(state: TUIState, raw: str) -> str | None:
         state.reasoning_effort = resolved_reasoning
         _save_tui_session(state)
         return (
-            f"{C_SUCCESS}✓{RESET} reasoning_effort set to {C_VALUE}{resolved_reasoning}{RESET}. "
+            f"{C_SUCCESS}{_SYM_OK}{RESET} reasoning_effort set to {C_VALUE}{resolved_reasoning}{RESET}. "
             f"{C_DIM}Forwarded to codex backend.{RESET}"
         )
     if cmd == "/rounds":
@@ -1671,7 +1512,7 @@ def _handle_command(state: TUIState, raw: str) -> str | None:
             return f"{C_ERROR}max_rounds must be >= 1{RESET}"
         state.max_rounds = rounds
         _save_tui_session(state)
-        return f"{C_SUCCESS}✓{RESET} max_rounds set to {C_VALUE}{rounds}{RESET}."
+        return f"{C_SUCCESS}{_SYM_OK}{RESET} max_rounds set to {C_VALUE}{rounds}{RESET}."
     if cmd == "/autoresearch":
         lowered = arg.lower()
         if lowered not in {"on", "off"}:
@@ -1679,12 +1520,12 @@ def _handle_command(state: TUIState, raw: str) -> str | None:
         state.autoresearch = lowered == "on"
         state.agent = None
         _save_tui_session(state)
-        return f"{C_SUCCESS}✓{RESET} autoresearch={C_VALUE}{state.autoresearch}{RESET}. Agent reloaded."
+        return f"{C_SUCCESS}{_SYM_OK}{RESET} autoresearch={C_VALUE}{state.autoresearch}{RESET}. Agent reloaded."
     if cmd == "/research":
         state.research_instructions = arg or None
         state.agent = None
         _save_tui_session(state)
-        return f"{C_SUCCESS}✓{RESET} research_instructions updated. Agent reloaded."
+        return f"{C_SUCCESS}{_SYM_OK}{RESET} research_instructions updated. Agent reloaded."
     if cmd == "/codex-login":
         return _run_codex_login(state)
     if cmd == "/cd":
@@ -1692,11 +1533,11 @@ def _handle_command(state: TUIState, raw: str) -> str | None:
             return f"{C_WARNING}Usage:{RESET} {C_CMD}/cd <dir>{RESET}"
         target = Path(arg).expanduser().resolve()
         if not target.exists() or not target.is_dir():
-            return f"{C_ERROR}✗ Directory not found:{RESET} {target}"
+            return f"{C_ERROR}{_SYM_ERR} Directory not found:{RESET} {target}"
         state.cwd = target
         state.agent = None
         _save_tui_session(state)
-        return f"{C_SUCCESS}✓{RESET} cwd set to {C_TEXT}{target}{RESET}. Agent reloaded."
+        return f"{C_SUCCESS}{_SYM_OK}{RESET} cwd set to {C_TEXT}{target}{RESET}. Agent reloaded."
     return f"{C_ERROR}Unknown command.{RESET} Use {C_CMD}/help{RESET}."
 
 
@@ -1930,9 +1771,9 @@ def _render_prompt_and_response(result: ChatResult, state: TUIState | None = Non
         att_list = ", ".join(result.attachments[:3])
         meta_parts.append(f"{C_ACCENT}📎 {att_list}{RESET}")
     if result.tool_events:
-        meta_parts.append(f"{C_LABEL}⚙ {len(result.tool_events)} tools{RESET}")
+        meta_parts.append(f"{C_LABEL}{_SYM_BULLET} {len(result.tool_events)} tools{RESET}")
     if result.warnings:
-        meta_parts.append(f"{C_WARNING}⚠ {len(result.warnings)} warnings{RESET}")
+        meta_parts.append(f"{C_WARNING}{_SYM_WARN} {len(result.warnings)} warnings{RESET}")
     if meta_parts:
         print(f"  {C_DIM}│{RESET} {'  '.join(meta_parts)}")
 
@@ -1952,9 +1793,9 @@ def _render_prompt_and_response(result: ChatResult, state: TUIState | None = Non
         visible_w = result.warnings[:_MAX_VISIBLE_WARNINGS]
         hidden_w = len(result.warnings) - _MAX_VISIBLE_WARNINGS
         for warning in visible_w:
-            print(f"  {C_DIM}│{RESET}  {C_WARNING}⚠ {warning}{RESET}")
+            print(f"  {C_DIM}│{RESET}  {C_WARNING}{_SYM_WARN} {warning}{RESET}")
         if hidden_w > 0:
-            print(f"  {C_DIM}│{RESET}  {C_WARNING}⚠ ... {hidden_w} more warnings{RESET}")
+            print(f"  {C_DIM}│{RESET}  {C_WARNING}{_SYM_WARN} ... {hidden_w} more warnings{RESET}")
 
     # Response header
     print()
@@ -2044,7 +1885,7 @@ def _print_tool_events_expanded(state: TUIState) -> None:
     w = _get_term_width()
     rule_w = min(60, w - 4)
     rule_pad = max(0, (w - rule_w) // 2)
-    thin_rule = f"{' ' * rule_pad}{C_BORDER}{'─' * rule_w}{RESET}"
+    thin_rule = f"{' ' * rule_pad}{C_BORDER}{_SYM_RULE * rule_w}{RESET}"
     print()
     print(f"  {C_BRAND_BOLD}Tool Events (Last Turn){RESET}")
     print(thin_rule)
@@ -2052,200 +1893,16 @@ def _print_tool_events_expanded(state: TUIState) -> None:
         print(f"  {C_DIM}No tool events from the last turn.{RESET}")
         print()
         return
-    print(f"  {C_LABEL}⚙ {len(state.last_tool_events)} tools{RESET}")
+    print(f"  {C_LABEL}{_SYM_BULLET} {len(state.last_tool_events)} tools{RESET}")
     for i, event in enumerate(state.last_tool_events):
         connector = "└─" if i == len(state.last_tool_events) - 1 else "├─"
         print(f"  {C_DIM}{connector}{RESET} {C_VALUE}{event}{RESET}")
     if state.last_warnings:
         print()
-        print(f"  {C_WARNING}⚠ {len(state.last_warnings)} warnings{RESET}")
+        print(f"  {C_WARNING}{_SYM_WARN} {len(state.last_warnings)} warnings{RESET}")
         for warning in state.last_warnings:
             print(f"    {C_WARNING}{warning}{RESET}")
     print()
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Toast Notifications
-# ─────────────────────────────────────────────────────────────────────────────
-
-def _toast(msg: str, kind: str = "info", duration: float = 1.8) -> None:
-    """Show a non-blocking top-right toast that auto-clears after `duration`."""
-    if not _COLOR_ENABLED:
-        return
-    colors = {
-        "info": C_ACCENT,
-        "success": C_SUCCESS,
-        "warning": C_WARNING,
-        "error": C_ERROR,
-    }
-    icons = {"info": "ℹ", "success": "✓", "warning": "⚠", "error": "✗"}
-    c = colors.get(kind, C_ACCENT)
-    icon = icons.get(kind, "•")
-    text = f" {icon} {msg} "
-    w = _get_term_width()
-    visible_len = len(_strip_ansi(text))
-    x = max(1, w - visible_len - 1)
-    # Save cursor → move to row=1, col=x → draw → restore cursor
-    sys.stdout.write(
-        f"\033[s\033[1;{x}H{c}{DIM}{text}{RESET}\033[u"
-    )
-    sys.stdout.flush()
-
-    def _clear_toast() -> None:
-        time.sleep(duration)
-        sys.stdout.write(f"\033[s\033[1;{x}H{' ' * visible_len}\033[u")
-        sys.stdout.flush()
-
-    threading.Thread(target=_clear_toast, daemon=True).start()
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# @ File Completer + Command Completer (for prompt_toolkit)
-# ─────────────────────────────────────────────────────────────────────────────
-
-if _HAS_PROMPT_TOOLKIT:
-    # Directories to skip entirely during file scanning
-    _SKIP_DIRS = {
-        "__pycache__", "node_modules", ".git", "venv", ".venv", ".env",
-        ".tox", ".mypy_cache", ".pytest_cache", ".ruff_cache",
-        "site-packages", "dist-info", ".egg-info", ".eggs",
-        "Lib", "Include", "Scripts", "lib", "include",
-        "build", "dist", ".idea", ".vs", ".vscode",
-        "htmlcov", "coverage", ".coverage",
-    }
-
-    class _AtFileCompleter(Completer):  # type: ignore[misc]
-        """Autocomplete file paths after @ in prompts — cached & fast."""
-
-        _MAX_DEPTH = 3
-        _MAX_RESULTS = 25
-        _CACHE_TTL = 5.0  # Seconds before re-scanning
-
-        def __init__(self, cwd_fn):
-            self.cwd_fn = cwd_fn
-            self._cache: list[str] = []
-            self._cache_cwd: Path | None = None
-            self._cache_time: float = 0.0
-
-        def _refresh_cache(self, cwd: Path) -> list[str]:
-            """Rebuild file list only when CWD changes or cache expires."""
-            now = time.monotonic()
-            if (
-                self._cache_cwd == cwd
-                and self._cache
-                and (now - self._cache_time) < self._CACHE_TTL
-            ):
-                return self._cache
-
-            entries: list[str] = []
-            self._walk(cwd, cwd, 0, entries)
-            entries.sort(key=str.lower)
-            self._cache = entries
-            self._cache_cwd = cwd
-            self._cache_time = now
-            return entries
-
-        def _walk(self, base: Path, current: Path, depth: int, out: list[str]) -> None:
-            """Manual walk with depth limit and smart directory skipping."""
-            if depth > self._MAX_DEPTH:
-                return
-            try:
-                children = sorted(current.iterdir(), key=lambda p: p.name.lower())
-            except (PermissionError, OSError):
-                return
-            for child in children:
-                name = child.name
-                if name.startswith("."):
-                    continue
-                if name in _SKIP_DIRS:
-                    continue
-                if name.endswith(".dist-info") or name.endswith(".egg-info"):
-                    continue
-                try:
-                    rel = str(child.relative_to(base)).replace("\\", "/")
-                except ValueError:
-                    continue
-                out.append(rel)
-                if child.is_dir():
-                    self._walk(base, child, depth + 1, out)
-
-        def get_completions(self, document, complete_event):
-            text = document.text_before_cursor
-            at_pos = text.rfind("@")
-            if at_pos < 0:
-                return
-            if at_pos > 0 and text[at_pos - 1] not in (" ", "\t", "\n"):
-                return
-            partial = text[at_pos + 1:].lower().replace("\\", "/")
-            raw_partial = text[at_pos + 1:]
-            cwd = self.cwd_fn()
-            entries = self._refresh_cache(cwd)
-            count = 0
-            for rel in entries:
-                if count >= self._MAX_RESULTS:
-                    break
-                rel_lower = rel.lower()
-                if rel_lower.startswith(partial) or (partial and partial in rel_lower):
-                    full = cwd / rel.replace("/", os.sep)
-                    meta = ""
-                    try:
-                        if full.is_dir():
-                            meta = "dir"
-                        else:
-                            meta = self._file_size(full)
-                    except (OSError, PermissionError):
-                        pass
-                    yield Completion(
-                        rel,
-                        start_position=-len(raw_partial),
-                        display=rel,
-                        display_meta=meta,
-                    )
-                    count += 1
-
-        @staticmethod
-        def _file_size(p: Path) -> str:
-            try:
-                size = p.stat().st_size
-                if size < 1024:
-                    return f"{size}B"
-                if size < 1024 * 1024:
-                    return f"{size // 1024}KB"
-                return f"{size // (1024 * 1024)}MB"
-            except (OSError, PermissionError):
-                return ""
-
-
-    class _CommandCompleter(Completer):  # type: ignore[misc]
-        """Autocomplete / slash commands."""
-
-        _COMMANDS = [
-            "/help", "/exit", "/compose", "/status", "/new", "/load",
-            "/sessions", "/history", "/clear", "/cd", "/tools",
-            "/backend", "/models", "/model", "/reasoning", "/rounds",
-            "/autoresearch", "/research", "/codex-login",
-        ]
-
-        def get_completions(self, document, complete_event):
-            text = document.text_before_cursor.lstrip()
-            if not text.startswith("/"):
-                return
-            if " " in text:
-                return
-            for cmd in self._COMMANDS:
-                if cmd.startswith(text.lower()):
-                    yield Completion(cmd, start_position=-len(text))
-
-
-    class _MergedCompleter(Completer):  # type: ignore[misc]
-        """Merges @-file and /command completers."""
-
-        def __init__(self, completers: list[Completer]):
-            self.completers = completers
-
-        def get_completions(self, document, complete_event):
-            for completer in self.completers:
-                yield from completer.get_completions(document, complete_event)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -2264,54 +1921,7 @@ def _build_prompt_prefix(state: TUIState) -> str:
         f"{C_ACCENT_DIM}{backend_short}{RESET}"
         f"{C_DIM}:{RESET}"
         f"{C_VALUE}{session_short}{RESET}"
-        f" {C_PROMPT_ARROW}❯{RESET} "
-    )
-
-
-def _build_prompt_prefix_html(state: TUIState) -> str:
-    """Build prompt prefix using prompt_toolkit HTML formatting."""
-    backend_short = "cdx" if state.backend == "codex" else "oai"
-    session_short = state.session_id.split("-")[-1][:6]
-    cwd_name = state.cwd.name or str(state.cwd)
-    return (
-        f'<style fg="#646478">{cwd_name}</style>'
-        f' <style fg="#a78bfa" bold="true">mtp</style>'
-        f'<style fg="#646478">:</style>'
-        f'<style fg="#46a0be">{backend_short}</style>'
-        f'<style fg="#646478">:</style>'
-        f'<style fg="#6ee7b7">{session_short}</style>'
-        f' <style fg="#a78bfa">❯</style> '
-    )
-
-
-def _build_bottom_toolbar(state: TUIState) -> str:
-    """Build the persistent bottom status toolbar (prompt_toolkit HTML format).
-
-    Design: single muted palette, clean dot separators, readable shortcuts.
-    """
-    model = _active_model_name(state)
-    turns = len(state.transcript)
-    reasoning = state.reasoning_effort
-    backend = state.backend
-
-    d = '#6b6b80'  # dim label
-    v = '#9d9db5'  # value (slightly brighter, same hue)
-    sep = f'<style fg="#3d3d50"> · </style>'
-
-    return (
-        f'<style fg="{v}">{model}</style>'
-        f'{sep}'
-        f'<style fg="{d}">reasoning </style><style fg="{v}">{reasoning}</style>'
-        f'{sep}'
-        f'<style fg="{d}">{backend}</style>'
-        f'{sep}'
-        f'<style fg="{d}">turns </style><style fg="{v}">{turns}</style>'
-        f'<style fg="#3d3d50">  │  </style>'
-        f'<style fg="{d}">^C </style><style fg="#7a7a95">stop</style>'
-        f'<style fg="#3d3d50">  </style>'
-        f'<style fg="{d}">^L </style><style fg="#7a7a95">clear</style>'
-        f'<style fg="#3d3d50">  </style>'
-        f'<style fg="{d}">^D </style><style fg="#7a7a95">exit</style>'
+        f" {C_PROMPT_ARROW}{_SYM_PROMPT_ARROW}{RESET} "
     )
 
 
@@ -2378,6 +1988,7 @@ def run_tui(args) -> int:
         session_id=initial_session_id,
         session_label=None,
         user_id="tui-user",
+        codex_session_id=None,
     )
     if args.session_id:
         existing = _load_session_record(state, args.session_id)
@@ -2387,56 +1998,8 @@ def run_tui(args) -> int:
     _animate_boot(state)
 
     # ── Build prompt session (prompt_toolkit or fallback) ────────────────
-    ptk_session = None
-    if _HAS_PROMPT_TOOLKIT:
-        try:
-            history_path = Path.home() / ".mtp" / "history.txt"
-            history_path.parent.mkdir(parents=True, exist_ok=True)
+    ptk_session = _build_prompt_session(state, lambda: _print_banner(state))
 
-            # Keyboard bindings
-            kb = KeyBindings()
-
-            @kb.add("c-l")
-            def _clear_screen(event):
-                """Ctrl+L: Clear screen and redraw banner."""
-                os.system("cls" if os.name == "nt" else "clear")
-                _print_banner(state)
-
-            completer = _MergedCompleter([
-                _CommandCompleter(),
-                _AtFileCompleter(cwd_fn=lambda: state.cwd),
-            ])
-
-            # prompt_toolkit style — dark theme for menus and toolbar
-            ptk_style = PTKStyle.from_dict({
-                # Bottom toolbar
-                "bottom-toolbar":       "bg:#0e0e1a #6b6b80",
-                "bottom-toolbar.text":  "bg:#0e0e1a #6b6b80",
-                # Completion menu — dark with violet accent
-                "completion-menu":                      "bg:#1a1a2e #b4aae0",
-                "completion-menu.completion":            "bg:#1a1a2e #b4aae0",
-                "completion-menu.completion.current":    "bg:#2d2b55 #e0daf8 bold",
-                "completion-menu.meta":                  "bg:#1a1a2e #646478",
-                "completion-menu.meta.current":          "bg:#2d2b55 #9d9db5",
-                # Scrollbar
-                "scrollbar.background":                 "bg:#1a1a2e",
-                "scrollbar.button":                     "bg:#3d3d60",
-                "scrollbar.arrow":                      "bg:#3d3d60",
-                # Auto-suggest ghost text
-                "auto-suggestion":                      "#3d3d50",
-            })
-
-            ptk_session = PromptSession(
-                history=FileHistory(str(history_path)),
-                auto_suggest=AutoSuggestFromHistory(),
-                completer=completer,
-                complete_while_typing=False,  # Completions on Tab only — no lag
-                key_bindings=kb,
-                style=ptk_style,
-                mouse_support=False,
-            )
-        except Exception:
-            ptk_session = None
 
     while True:
         try:
@@ -2458,7 +2021,7 @@ def run_tui(args) -> int:
             continue
         except EOFError:
             # Ctrl+D → exit
-            print(f"\n{C_BRAND}Goodbye!{RESET} ✨\n")
+            print(f"\n{C_BRAND}Goodbye!{RESET}\n")
             return 0
         raw = _sanitize_paste_artifacts(raw).strip()
         if not raw:
@@ -2484,13 +2047,13 @@ def run_tui(args) -> int:
                 # Continue as regular prompt below.
             else:
                 if out == "__exit__":
-                    print(f"\n{C_BRAND}Goodbye!{RESET} ✨\n")
+                    print(f"\n{C_BRAND}Goodbye!{RESET}\n")
                     return 0
                 if out:
                     print(f"  {out}")
                     # Show toast for model/setting changes
                     stripped_out = _strip_ansi(out)
-                    if stripped_out.startswith("✓") and len(stripped_out) < 80:
+                    if stripped_out.startswith(_SYM_OK) and len(stripped_out) < 80:
                         _toast(stripped_out, kind="success", duration=2.0)
                 continue
 
@@ -2501,7 +2064,10 @@ def run_tui(args) -> int:
             else state.openai_model
         )
 
-        print(f"  {C_DIM}▸ {state.backend} · {active_model} · reasoning={state.reasoning_effort}{RESET}")
+        print(
+            f"  {C_DIM}> {state.backend} {_SYM_DOT} {active_model} "
+            f"{_SYM_DOT} reasoning={state.reasoning_effort}{RESET}"
+        )
         spinner_preset = "reasoning" if state.reasoning_effort in ("high", "xhigh") else "default"
         spinner = _Spinner(label="Thinking", preset=spinner_preset)
         spinner.start()
@@ -2522,7 +2088,7 @@ def run_tui(args) -> int:
             continue
         except Exception as exc:  # noqa: BLE001
             spinner.stop()
-            print(f"  {C_ERROR}✗ Error:{RESET} {exc}")
+            print(f"  {C_ERROR}{_SYM_ERR} Error:{RESET} {exc}")
             continue
         spinner.stop()
         _record_turn(state, raw, result)

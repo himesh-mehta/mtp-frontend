@@ -91,6 +91,11 @@ Backends:
 - `codex`: bridges to official Codex CLI (`codex exec`) and uses your Codex login session.
 - `mtp-openai`: uses MTP SDK with `OpenAI` provider and local toolkits.
 
+Codex continuity behavior:
+- TUI now persists Codex resume session/thread IDs in the local session DB.
+- Follow-up prompts in the same TUI session use `codex exec resume` automatically.
+- If a saved Codex thread is no longer resumable, TUI falls back to a fresh Codex session and records a warning.
+
 Default TUI model settings:
 - codex backend model: `gpt-5.3-codex`
 - mtp-openai backend model: `gpt-5.4-mini`
