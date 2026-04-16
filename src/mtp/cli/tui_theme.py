@@ -158,26 +158,26 @@ def _bg_rgb(r: int, g: int, b: int) -> str:
 # ─────────────────────────────────────────────────────────────────────────────
 # Semantic Palette
 # ─────────────────────────────────────────────────────────────────────────────
-# A rich purple/violet → cyan gradient feel, modern dark-terminal aesthetic.
+# A rich immersive Synthwave / Cyberpunk neon gradient feel.
 
-C_BRAND         = _fg_rgb(167, 139, 250)   # Soft violet  — primary brand
-C_BRAND_BOLD    = BOLD + _fg_rgb(167, 139, 250)
-C_ACCENT        = _fg_rgb(99, 220, 255)    # Electric cyan — accent
-C_ACCENT_DIM    = _fg_rgb(70, 160, 190)    # Muted cyan
-C_SUCCESS       = _fg_rgb(52, 211, 153)    # Mint green   — success/active
-C_WARNING       = _fg_rgb(251, 191, 36)    # Amber        — warnings
-C_ERROR         = _fg_rgb(248, 113, 113)   # Soft red     — errors
-C_DIM           = _fg_rgb(100, 100, 120)   # Muted grey   — secondary text
-C_TEXT          = _fg_rgb(220, 220, 230)    # Off-white    — body text
-C_LABEL         = _fg_rgb(180, 170, 220)   # Lavender     — labels
+C_BRAND         = _fg_rgb(192, 132, 252)   # Neon Purple — primary brand
+C_BRAND_BOLD    = BOLD + _fg_rgb(192, 132, 252)
+C_ACCENT        = _fg_rgb(56, 189, 248)    # Electric Neon Cyan — accent
+C_ACCENT_DIM    = _fg_rgb(14, 116, 144)    # Muted Cyan
+C_SUCCESS       = _fg_rgb(52, 211, 153)    # Mint Green   — success/active
+C_WARNING       = _fg_rgb(251, 191, 36)    # Radiant Amber— warnings
+C_ERROR         = _fg_rgb(244, 63, 94)     # Neon Rose    — errors
+C_DIM           = _fg_rgb(113, 113, 122)   # Zinc 500     — secondary text
+C_TEXT          = _fg_rgb(244, 244, 246)   # Pure Off-White— body text
+C_LABEL         = _fg_rgb(167, 139, 250)   # Lavender     — labels
 C_HIGHLIGHT     = BOLD + _fg_rgb(255, 255, 255)  # Bright white
 C_MODEL         = _fg_rgb(250, 204, 21)    # Gold         — model names
 C_CMD           = _fg_rgb(129, 140, 248)   # Indigo       — commands
-C_KEY           = _fg_rgb(192, 132, 252)   # Purple       — keyboard shortcuts
-C_VALUE         = _fg_rgb(110, 231, 183)   # Seafoam      — values
-C_BORDER        = _fg_rgb(75, 75, 100)     # Dark border
-C_PROMPT_ARROW  = _fg_rgb(167, 139, 250)   # Brand violet for prompt
-C_RESPONSE      = _fg_rgb(196, 181, 253)   # Light violet for assistant label
+C_KEY           = _fg_rgb(216, 180, 254)   # Pink Purple  — keyboard shortcuts
+C_VALUE         = _fg_rgb(45, 212, 191)    # Vivid Teal   — values
+C_BORDER        = _fg_rgb(63, 63, 70)      # Zinc 700     — structural borders
+C_PROMPT_ARROW  = BOLD + _fg_rgb(236, 72, 153)   # Hot Pink     — prompt
+C_RESPONSE      = BOLD + _fg_rgb(139, 92, 246)   # Deep Violet  — assistant label
 
 
 # ─────────────────────────────────────────────────────────────────────────────
