@@ -6,13 +6,17 @@ import shutil
 
 class CatEngine:
     def __init__(self):
-        self.width = 32
-        self.height = 20
+        # 48x24 virtual pixels = 24x12 terminal characters (using 2x2 Quadrant blocks)
+        self.width = 48
+        self.height = 24
         self.state = "idle"
         self.tick = 0.0
         self.running = False
         self.thread = None
         self._lock = threading.Lock()
+        
+        # Used for smart transparent diffing
+        self.prev_blocks = [[ "empty" for _ in range(self.width // 2)] for _ in range(self.height // 2)]
 
     def start(self):
         with self._lock:
@@ -34,7 +38,7 @@ class CatEngine:
             self.state = new_state
 
     def _loop(self):
-        fps = 12
+        fps = 15
         dt = 1.0 / fps
         try:
             while self.running:
@@ -52,9 +56,10 @@ class CatEngine:
             pass
 
     def _draw_frame(self):
-        # Prevent drawing if terminal is too small
         term_size = shutil.get_terminal_size()
-        if term_size.columns < 60 or term_size.lines < 20:
+        cols = self.width // 2
+        
+        if term_size.columns < 50 or term_size.lines < 20:
             return
 
         pixels = [[None for _ in range(self.width)] for _ in range(self.height)]
@@ -62,46 +67,124 @@ class CatEngine:
 
         out = ["\0337"]  # save cursor
         start_y = 2
-        start_x = term_size.columns - self.width - 2
+        start_x = term_size.columns - cols - 3
 
-        for y in range(0, self.height, 2):
-            out.append(f"\033[{start_y + y//2};{start_x}H")  # move to line
-            for x in range(self.width):
-                top = pixels[y][x]
-                bot = pixels[y+1][x] if y+1 < self.height else None
+        quad_map = [
+            ' ', '▗', '▖', '▄', '▝', '▐', '▞', '▟',
+            '▘', '▚', '▌', '▙', '▀', '▜', '▛', '█'
+        ]
+
+        def color_sq_dist(c1, c2):
+            if c1 is None and c2 is None: return 0
+            if c1 is None or c2 is None: return 999999
+            return (c1[0]-c2[0])**2 + (c1[1]-c2[1])**2 + (c1[2]-c2[2])**2
+
+        for cy in range(0, self.height, 2):
+            out.append(f"\033[{start_y + cy//2};{start_x}H")  # move to line start
+            
+            for cx in range(0, self.width, 2):
+                p00 = pixels[cy][cx]
+                p10 = pixels[cy][cx+1]
+                p01 = pixels[cy+1][cx]
+                p11 = pixels[cy+1][cx+1]
                 
-                if top is None and bot is None:
-                    out.append("\033[0m\033[49m ")
-                elif bot is None:
-                    out.append(f"\033[0m\033[38;2;{top[0]};{top[1]};{top[2]}m\033[49m\u2580")
-                elif top is None:
-                    out.append(f"\033[0m\033[38;2;{bot[0]};{bot[1]};{bot[2]}m\033[49m\u2584")
+                block = [p00, p10, p01, p11]
+                freq = {}
+                for p in block:
+                    freq[p] = freq.get(p, 0) + 1
+                    
+                is_empty = (len(freq) == 1 and list(freq.keys())[0] is None)
+                was_empty = (self.prev_blocks[cy//2][cx//2] == "empty")
+                
+                if is_empty:
+                    self.prev_blocks[cy//2][cx//2] = "empty"
+                    if was_empty:
+                        out.append("\033[1C")  # Skip 1 character entirely (true transparency)
+                    else:
+                        out.append("\033[0m\033[49m ") # Erase exactly this block
+                    continue
+                    
+                self.prev_blocks[cy//2][cx//2] = "drawn"
+                
+                # Sort to get top colors
+                sorted_colors = sorted(freq.items(), key=lambda x: x[1], reverse=True)
+                c_list = [c[0] for c in sorted_colors]
+                
+                if len(c_list) == 1:
+                    fg = c_list[0]
+                    bg = None
                 else:
-                    out.append(f"\033[0m\033[38;2;{top[0]};{top[1]};{top[2]}m\033[48;2;{bot[0]};{bot[1]};{bot[2]}m\u2580")
+                    c1, c2 = c_list[0], c_list[1]
+                    if c1 is None:
+                        bg, fg = c1, c2
+                    elif c2 is None:
+                        bg, fg = c2, c1
+                    else:
+                        fg, bg = c1, c2
+                
+                char_idx = 0
+                for i, p in enumerate(block):
+                    if p == fg:
+                        mapped = fg
+                    elif p == bg:
+                        mapped = bg
+                    else:
+                        # Quantize remaining colors logically to fg or bg
+                        if color_sq_dist(p, fg) < color_sq_dist(p, bg):
+                            mapped = fg
+                        else:
+                            mapped = bg
+                            
+                    if mapped == fg and fg is not None:
+                        if i == 0: char_idx |= 8    # Top-Left
+                        elif i == 1: char_idx |= 4  # Top-Right
+                        elif i == 2: char_idx |= 2  # Bottom-Left
+                        elif i == 3: char_idx |= 1  # Bottom-Right
+                        
+                char = quad_map[char_idx]
+                bg_ansi = "\033[49m" if bg is None else f"\033[48;2;{bg[0]};{bg[1]};{bg[2]}m"
+                fg_ansi = "" if fg is None else f"\033[38;2;{fg[0]};{fg[1]};{fg[2]}m"
+                out.append(f"\033[0m{bg_ansi}{fg_ansi}{char}")
+                
             out.append("\033[0m")
             
         out.append("\0338")  # restore cursor
-        # write atomically
+        # Write atomically to terminal
         sys.stdout.write("".join(out))
         sys.stdout.flush()
 
-    # --- Drawing Primitives ---
+    # --- Vector Drawing Primitives ---
     def _rect(self, pixels, x, y, w, h, color):
         for i in range(max(0, int(y)), min(self.height, int(y+h))):
             for j in range(max(0, int(x)), min(self.width, int(x+w))):
                 pixels[i][j] = color
 
-    def _circle(self, pixels, cx, cy, r, color):
-        for i in range(max(0, int(cy-r)), min(self.height, int(cy+r+1))):
-            for j in range(max(0, int(cx-r)), min(self.width, int(cx+r+1))):
-                if (j-cx)**2 + (i-cy)**2 <= r*r:
-                    pixels[i][j] = color
-                    
     def _ellipse(self, pixels, cx, cy, rx, ry, color):
         for i in range(max(0, int(cy-ry)), min(self.height, int(cy+ry+1))):
             for j in range(max(0, int(cx-rx)), min(self.width, int(cx+rx+1))):
                 if ((j-cx)/rx)**2 + ((i-cy)/ry)**2 <= 1.0:
                     pixels[i][j] = color
+                    
+    def _triangle(self, pixels, x1, y1, x2, y2, x3, y3, color):
+        def sign(p1x, p1y, p2x, p2y, p3x, p3y):
+            return (p1x - p3x) * (p2y - p3y) - (p2x - p3x) * (p1y - p3y)
+
+        min_x = int(max(0, min(x1, x2, x3)))
+        max_x = int(min(self.width - 1, max(x1, x2, x3)))
+        min_y = int(max(0, min(y1, y2, y3)))
+        max_y = int(min(self.height - 1, max(y1, y2, y3)))
+
+        for i in range(min_y, max_y + 1):
+            for j in range(min_x, max_x + 1):
+                d1 = sign(j, i, x1, y1, x2, y2)
+                d2 = sign(j, i, x2, y2, x3, y3)
+                d3 = sign(j, i, x3, y3, x1, y1)
+                has_neg = (d1 < 0) or (d2 < 0) or (d3 < 0)
+                has_pos = (d1 > 0) or (d2 > 0) or (d3 > 0)
+                if not (has_neg and has_pos):
+                    # Bounds check
+                    if 0 <= i < self.height and 0 <= j < self.width:
+                        pixels[i][j] = color
 
     # --- Compositor ---
     def _render_scene(self, pixels):
@@ -115,46 +198,48 @@ class CatEngine:
         C_ZZZ = (189, 147, 249)
         C_DOT = (255, 184, 108)
         
-        hx, hy = 18, 9   # Head center
-        bx, by = 14, 14  # Body center
-        tx, ty = 6, 17   # Tail base
+        # Note: X coordinates are mathematically doubled (rx = 2 * ry)
+        # to guarantee proportional drawing in quadrant space since terminal pixels are 1:2
+        hx, hy = 28, 10
+        bx, by = 24, 17
+        tx, ty = 12, 18
         
         breathe = 0.0
         tail_angle = 0.0
-        head_dy = 0.0
         eye_state = "closed"
         dot_pos = None
         zzz_frame = None
 
         if self.state == "idle":
-            breathe = math.sin(self.tick * 2) * 1.5
+            breathe = math.sin(self.tick * 2) * 1.2
             hy += breathe * 0.4
-            by -= breathe * 0.4
+            by -= breathe * 0.2
             eye_state = "closed"
-            tail_angle = -180  # wrapped around
+            tail_angle = -180
             z_cycle = (self.tick % 4.0) / 4.0
             if z_cycle > 0.1:
-                zzz_frame = (16 + z_cycle*6, 6 - z_cycle*10)
+                zx = 32 + z_cycle * 12
+                zy = 4 - z_cycle * 8
+                zzz_frame = (int(zx), int(zy))
                 
         elif self.state == "wakeup":
-            head_dy = -3 * min(1.0, self.tick * 4)
+            head_dy = -4 * min(1.0, self.tick * 4)
             hy += head_dy
             eye_state = "open"
-            # animate tail uncurling and flicking
-            tail_angle = -180 + min(1.0, self.tick * 3) * 135
+            tail_angle = -180 + min(1.0, self.tick * 3) * 140
             
         elif self.state == "thinking":
             eye_state = "open"
             hy -= 3
-            tail_angle = math.sin(self.tick * 5) * 20 - 45
-            dot_pos = 18 + math.sin(self.tick * 3) * 6
+            tail_angle = math.sin(self.tick * 6) * 20 - 40
+            dot_pos = 28 + math.sin(self.tick * 3) * 16
             
         elif self.state == "response":
             eye_state = "happy"
-            bounce = abs(math.sin(self.tick * 6)) * 3
+            bounce = abs(math.sin(self.tick * 6)) * 4
             hy -= bounce
-            by -= bounce
-            tail_angle = -30
+            by -= bounce * 0.5
+            tail_angle = -20
             
         elif self.state == "error":
             eye_state = "wide"
@@ -162,77 +247,83 @@ class CatEngine:
             hy -= 4
             tail_angle = -90
 
-        # --- Draw Tail ---
-        for i in range(8):
+        # --- Draw Tail (Layer 1) ---
+        for i in range(12):
             dist = i * 2.0
             rad = tail_angle * math.pi / 180.0
-            tr = 3.0 - (i * 0.2)
+            tr = 3.5 - (i * 0.15)
             if self.state == "error":
-                tr += 1.5  # Poofed up
-            px = tx + math.cos(rad) * dist
+                tr += 1.5
+            px = tx + math.cos(rad) * (dist * 2.0)
             py = ty + math.sin(rad) * dist
-            self._circle(pixels, px, py, tr, C_MID)
+            self._ellipse(pixels, px, py, int(tr*2), int(tr), C_MID)
 
-        # --- Draw Body ---
-        self._ellipse(pixels, bx, by, 9, 5 + breathe, C_BODY)
-        self._ellipse(pixels, bx + 2, by + 1, 6, 3 + breathe * 0.7, C_BELLY)
+        # --- Draw Body (Layer 2) ---
+        breathe_rx = breathe * 1.5
+        breathe_ry = breathe * 0.8
+        self._ellipse(pixels, bx, by, 16 + breathe_rx, 7 + breathe_ry, C_BODY)
+        self._ellipse(pixels, bx + 3, by + 1.5, 10 + breathe_rx, 4 + breathe_ry, C_BELLY)
 
-        # --- Draw Head & Features ---
-        self._circle(pixels, hx, hy, 5, C_BODY)
+        # --- Draw Head & Features (Layer 3) ---
+        self._ellipse(pixels, hx, hy, 12, 6, C_BODY)
         
+        # Ears (Perfect geometric solid triangles)
         if self.state == "error":
-            # flattened back ears
-            self._circle(pixels, hx-4, hy-2, 2, C_BODY)
-            self._circle(pixels, hx+4, hy-2, 2, C_BODY)
+            self._triangle(pixels, hx-11, hy-1, hx-5, hy-4, hx-3, hy-1, C_BODY)
+            self._triangle(pixels, hx+11, hy-1, hx+5, hy-4, hx+3, hy-1, C_BODY)
         else:
-            # perked up ears
-            self._circle(pixels, hx-4, hy-4, 2.5, C_BODY)
-            self._circle(pixels, hx+4, hy-4, 2.5, C_BODY)
-            self._circle(pixels, hx-4, hy-3.5, 1.2, C_PINK)
-            self._circle(pixels, hx+4, hy-3.5, 1.2, C_PINK)
+            self._triangle(pixels, hx-10, hy-1, hx-4, hy-2, hx-8, hy-8, C_BODY)
+            self._triangle(pixels, hx-9, hy-2, hx-5, hy-3, hx-7.5, hy-6, C_PINK)
+            self._triangle(pixels, hx+10, hy-1, hx+4, hy-2, hx+8, hy-8, C_BODY)
+            self._triangle(pixels, hx+9, hy-2, hx+5, hy-3, hx+7.5, hy-6, C_PINK)
 
-        # Muzzle
-        self._ellipse(pixels, hx-1.5, hy+1.5, 2, 1.5, C_BELLY)
-        self._ellipse(pixels, hx+1.5, hy+1.5, 2, 1.5, C_BELLY)
-        self._rect(pixels, hx-0.5, hy+0.5, 2, 1, C_PINK)
+        # Muzzle / cheeks
+        self._ellipse(pixels, hx-3.5, hy+2.5, 4, 3, C_BELLY)
+        self._ellipse(pixels, hx+3.5, hy+2.5, 4, 3, C_BELLY)
+        self._ellipse(pixels, hx, hy+1.5, 2, 1, C_PINK)
 
-        # Eyes
+        # Eyes & Expressions
         if eye_state == "closed":
-            self._rect(pixels, hx-3, hy-1, 2, 1, C_PUPIL)
-            self._rect(pixels, hx+2, hy-1, 2, 1, C_PUPIL)
+            self._rect(pixels, hx-7, hy-2, 4, 1, C_PUPIL)
+            self._rect(pixels, hx+3, hy-2, 4, 1, C_PUPIL)
         elif eye_state == "open":
-            dx = 0
+            pupil_dx = 0
             if dot_pos:
-                dx = 1 if dot_pos > hx else (-1 if dot_pos < hx else 0)
-            self._rect(pixels, hx-3, hy-2, 2, 2, C_EYE)
-            self._rect(pixels, hx+2, hy-2, 2, 2, C_EYE)
-            self._rect(pixels, hx-3+dx, hy-1, 1, 1, C_PUPIL)
-            self._rect(pixels, hx+2+dx, hy-1, 1, 1, C_PUPIL)
+                if dot_pos > hx + 4: pupil_dx = 2
+                elif dot_pos < hx - 4: pupil_dx = -2
+                
+            self._rect(pixels, hx-7, hy-3, 4, 3, C_EYE)
+            self._rect(pixels, hx+3, hy-3, 4, 3, C_EYE)
+            self._rect(pixels, hx-6 + pupil_dx, hy-2, 2, 2, C_PUPIL)
+            self._rect(pixels, hx+4 + pupil_dx, hy-2, 2, 2, C_PUPIL)
         elif eye_state == "happy":
-            self._rect(pixels, hx-3, hy-2, 2, 1, C_EYE)
-            self._rect(pixels, hx+2, hy-2, 2, 1, C_EYE)
-            self._rect(pixels, hx-3, hy-1, 1, 1, C_EYE)
-            self._rect(pixels, hx+3, hy-1, 1, 1, C_EYE)
+            self._rect(pixels, hx-7, hy-2, 4, 1, C_EYE)
+            self._rect(pixels, hx+3, hy-2, 4, 1, C_EYE)
+            self._rect(pixels, hx-7, hy-3, 1, 1, C_EYE)
+            self._rect(pixels, hx-4, hy-3, 1, 1, C_EYE)
+            self._rect(pixels, hx+3, hy-3, 1, 1, C_EYE)
+            self._rect(pixels, hx+6, hy-3, 1, 1, C_EYE)
         elif eye_state == "wide":
-            self._circle(pixels, hx-2.5, hy-1.5, 1.5, C_BELLY)
-            self._circle(pixels, hx+2.5, hy-1.5, 1.5, C_BELLY)
-            self._rect(pixels, hx-3, hy-2, 1, 1, C_PUPIL)
-            self._rect(pixels, hx+2, hy-2, 1, 1, C_PUPIL)
+            self._ellipse(pixels, hx-5, hy-2, 4, 3, C_BELLY)
+            self._ellipse(pixels, hx+5, hy-2, 4, 3, C_BELLY)
+            self._rect(pixels, hx-6, hy-2.5, 2, 2, C_PUPIL)
+            self._rect(pixels, hx+4, hy-2.5, 2, 2, C_PUPIL)
 
-        # --- FX ---
+        # --- FX overlay ---
         if dot_pos:
-            self._circle(pixels, dot_pos, hy-6, 1, C_DOT)
+            self._ellipse(pixels, int(dot_pos), int(hy-8), 3, 2, C_DOT)
 
         if zzz_frame:
             zx, zy = zzz_frame
-            self._rect(pixels, zx, zy, 2, 1, C_ZZZ)
-            self._rect(pixels, zx+1, zy+1, 1, 1, C_ZZZ)
-            self._rect(pixels, zx, zy+2, 2, 1, C_ZZZ)
+            self._rect(pixels, zx, zy, 4, 1, C_ZZZ)
+            self._rect(pixels, zx+2, zy+1, 2, 1, C_ZZZ)
+            self._rect(pixels, zx, zy+2, 4, 1, C_ZZZ)
 
 _ENGINE = CatEngine()
 
 def start_cat_ui():
-    _ENGINE.start()
+    if not _ENGINE.running:
+        _ENGINE.start()
 
 def set_cat_state(new_state: str):
     _ENGINE.set_state(new_state)
