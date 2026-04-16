@@ -2267,12 +2267,9 @@ def _switch_backend(state: TUIState, provider_name: str) -> str:
     
     # Build MTP agent
     try:
-        # Get or create tool registry
-        if state.agent and hasattr(state.agent, 'tools'):
-            tools = state.agent.tools
-        else:
-            tools = Agent.ToolRegistry()
-            register_local_toolkits(tools, base_dir=str(state.cwd))
+        # Always create a fresh tool registry to avoid stale autoresearch tools
+        tools = Agent.ToolRegistry()
+        register_local_toolkits(tools, base_dir=str(state.cwd))
         
         agent = mtp_backend.build_mtp_agent(
             provider=provider,
