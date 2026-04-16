@@ -13,8 +13,12 @@ from mtp.providers import (  # noqa: E402
     GeminiToolCallingProvider,
     Groq,
     GroqToolCallingProvider,
+    LMStudio,
+    LMStudioToolCallingProvider,
     OpenAI,
     OpenAIToolCallingProvider,
+    Ollama,
+    OllamaToolCallingProvider,
     OpenRouter,
     OpenRouterToolCallingProvider,
     SambaNova,
@@ -27,6 +31,8 @@ class ProviderAliasTests(unittest.TestCase):
         self.assertIs(Groq, GroqToolCallingProvider)
         self.assertIs(OpenRouter, OpenRouterToolCallingProvider)
         self.assertIs(OpenAI, OpenAIToolCallingProvider)
+        self.assertIs(LMStudio, LMStudioToolCallingProvider)
+        self.assertIs(Ollama, OllamaToolCallingProvider)
         self.assertIs(Gemini, GeminiToolCallingProvider)
         self.assertIs(Anthropic, AnthropicToolCallingProvider)
         self.assertIs(SambaNova, SambaNovaToolCallingProvider)
