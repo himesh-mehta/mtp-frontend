@@ -159,6 +159,14 @@ def run_mtp_prompt(
             # Calculate tokens per second
             tokens_per_sec = (total_tokens / total_duration) if total_duration > 0 else 0
             
+            # Default context window for MTP providers (240k tokens)
+            DEFAULT_CONTEXT_WINDOW = 240_000
+            
+            # Context window line (for progress bar rendering)
+            usage_lines.append(
+                f"context_window={total_tokens:,}/{DEFAULT_CONTEXT_WINDOW:,}"
+            )
+            
             # Main token line
             usage_lines.append(
                 f"tokens(in/out/total/reasoning)={total_input_tokens}/{total_output_tokens}/{total_tokens}/{reasoning_tokens}"
