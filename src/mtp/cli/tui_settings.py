@@ -18,6 +18,8 @@ DEFAULT_PROVIDER_MODELS: dict[str, str] = {
     "deepseek": "deepseek-chat",
     "togetherai": "meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo",
     "fireworksai": "accounts/fireworks/models/llama-v3p1-70b-instruct",
+    "ollama": "llama3.2:3b",  # Popular small model for local inference
+    "lmstudio": "qwen3",  # Generic default (user will select from loaded models)
 }
 
 
@@ -73,12 +75,25 @@ def ensure_provider_entry(payload: dict[str, Any], provider_name: str) -> dict[s
         payload["providers"] = providers
     entry = providers.get(provider_name)
     if not isinstance(entry, dict):
-        entry = {"api_key": None, "model": None, "models": []}
+        entry = {
+            "api_key": None,
+            "model": None,
+            "models": [],
+            "deployment_type": None,  # "local" or "cloud" for hybrid providers
+            "base_url": None,  # Custom endpoint for local/remote deployments
+        }
         providers[provider_name] = entry
+    
+    # Ensure all required fields exist
     if "api_key" not in entry:
         entry["api_key"] = None
     if "model" not in entry:
         entry["model"] = None
+    if "deployment_type" not in entry:
+        entry["deployment_type"] = None
+    if "base_url" not in entry:
+        entry["base_url"] = None
+    
     models = entry.get("models")
     if not isinstance(models, list):
         entry["models"] = []
@@ -103,9 +118,28 @@ def preferred_model_for_provider(payload: dict[str, Any], provider_name: str) ->
 
 def is_provider_configured(payload: dict[str, Any], provider_name: str) -> bool:
     """Check if a provider has API key and model configured."""
+    from .tui_local_providers import is_local_capable_provider
+    
     entry = ensure_provider_entry(payload, provider_name)
-    has_api_key = isinstance(entry.get("api_key"), str) and entry["api_key"].strip()
     has_model = isinstance(entry.get("model"), str) and entry["model"].strip()
+    
+    # Local providers don't require API keys
+    if is_local_capable_provider(provider_name):
+        deployment_type = entry.get("deployment_type")
+        if deployment_type == "local":
+            # Local deployment: only need model and base_url
+            has_base_url = isinstance(entry.get("base_url"), str) and entry["base_url"].strip()
+            return bool(has_model and has_base_url)
+        elif deployment_type == "cloud":
+            # Cloud deployment: need API key and model
+            has_api_key = isinstance(entry.get("api_key"), str) and entry["api_key"].strip()
+            return bool(has_api_key and has_model)
+        else:
+            # Not configured yet
+            return False
+    
+    # Cloud-only providers: need API key and model
+    has_api_key = isinstance(entry.get("api_key"), str) and entry["api_key"].strip()
     return bool(has_api_key and has_model)
 
 
@@ -183,3 +217,40 @@ def list_configured_providers(payload: dict[str, Any]) -> list[tuple[str, bool]]
     return result
 
 
+
+
+
+def set_deployment_type(payload: dict[str, Any], provider_name: str, deployment_type: str) -> None:
+    """Set deployment type for a provider (local or cloud)."""
+    entry = ensure_provider_entry(payload, provider_name)
+    entry["deployment_type"] = deployment_type
+
+
+def set_base_url(payload: dict[str, Any], provider_name: str, base_url: str) -> None:
+    """Set base URL for a provider."""
+    entry = ensure_provider_entry(payload, provider_name)
+    entry["base_url"] = base_url
+
+
+def get_deployment_type(payload: dict[str, Any], provider_name: str) -> str | None:
+    """Get deployment type for a provider."""
+    entry = ensure_provider_entry(payload, provider_name)
+    return entry.get("deployment_type")
+
+
+def get_base_url(payload: dict[str, Any], provider_name: str) -> str | None:
+    """Get base URL for a provider."""
+    entry = ensure_provider_entry(payload, provider_name)
+    return entry.get("base_url")
+
+
+def set_discovered_models(payload: dict[str, Any], provider_name: str, models: list[str]) -> None:
+    """Set the list of discovered models for a provider."""
+    entry = ensure_provider_entry(payload, provider_name)
+    entry["models"] = list(models)
+
+
+def set_preferred_model(payload: dict[str, Any], provider_name: str, model: str) -> None:
+    """Set the preferred model for a provider."""
+    entry = ensure_provider_entry(payload, provider_name)
+    entry["model"] = model

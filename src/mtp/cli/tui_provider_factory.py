@@ -20,6 +20,8 @@ SUPPORTED_TUI_PROVIDERS: tuple[str, ...] = (
     "deepseek",
     "togetherai",
     "fireworksai",
+    "ollama",      # Local inference support
+    "lmstudio",    # Local inference support
 )
 
 _PROVIDER_ALIASES: dict[str, str] = {
@@ -54,69 +56,100 @@ class ProviderSelection:
     provider_name: str
     model_name: str
     api_key: str | None
+    base_url: str | None = None  # For local providers
 
 
-_ProviderBuilder = Callable[[str, str | None], Any]
+_ProviderBuilder = Callable[[str, str | None, str | None], Any]
 
 
-def _openai_builder(model: str, api_key: str | None) -> Any:
+def _openai_builder(model: str, api_key: str | None, base_url: str | None) -> Any:
     from mtp.providers import OpenAI
     return OpenAI(model=model, api_key=api_key)
 
 
-def _groq_builder(model: str, api_key: str | None) -> Any:
+def _groq_builder(model: str, api_key: str | None, base_url: str | None) -> Any:
     from mtp.providers import Groq
     return Groq(model=model, api_key=api_key)
 
 
-def _claude_builder(model: str, api_key: str | None) -> Any:
+def _claude_builder(model: str, api_key: str | None, base_url: str | None) -> Any:
     from mtp.providers import Anthropic
     return Anthropic(model=model, api_key=api_key)
 
 
-def _openrouter_builder(model: str, api_key: str | None) -> Any:
+def _openrouter_builder(model: str, api_key: str | None, base_url: str | None) -> Any:
     from mtp.providers import OpenRouter
     return OpenRouter(model=model, api_key=api_key)
 
 
-def _gemini_builder(model: str, api_key: str | None) -> Any:
+def _gemini_builder(model: str, api_key: str | None, base_url: str | None) -> Any:
     from mtp.providers import Gemini
     return Gemini(model=model, api_key=api_key)
 
 
-def _mistral_builder(model: str, api_key: str | None) -> Any:
+def _mistral_builder(model: str, api_key: str | None, base_url: str | None) -> Any:
     from mtp.providers import Mistral
     return Mistral(model=model, api_key=api_key)
 
 
-def _cohere_builder(model: str, api_key: str | None) -> Any:
+def _cohere_builder(model: str, api_key: str | None, base_url: str | None) -> Any:
     from mtp.providers import Cohere
     return Cohere(model=model, api_key=api_key)
 
 
-def _sambanova_builder(model: str, api_key: str | None) -> Any:
+def _sambanova_builder(model: str, api_key: str | None, base_url: str | None) -> Any:
     from mtp.providers import SambaNova
     return SambaNova(model=model, api_key=api_key)
 
 
-def _cerebras_builder(model: str, api_key: str | None) -> Any:
+def _cerebras_builder(model: str, api_key: str | None, base_url: str | None) -> Any:
     from mtp.providers import Cerebras
     return Cerebras(model=model, api_key=api_key)
 
 
-def _deepseek_builder(model: str, api_key: str | None) -> Any:
+def _deepseek_builder(model: str, api_key: str | None, base_url: str | None) -> Any:
     from mtp.providers import DeepSeek
     return DeepSeek(model=model, api_key=api_key)
 
 
-def _togetherai_builder(model: str, api_key: str | None) -> Any:
+def _togetherai_builder(model: str, api_key: str | None, base_url: str | None) -> Any:
     from mtp.providers import TogetherAI
     return TogetherAI(model=model, api_key=api_key)
 
 
-def _fireworksai_builder(model: str, api_key: str | None) -> Any:
+def _fireworksai_builder(model: str, api_key: str | None, base_url: str | None) -> Any:
     from mtp.providers import FireworksAI
     return FireworksAI(model=model, api_key=api_key)
+
+
+def _ollama_builder(model: str, api_key: str | None, base_url: str | None) -> Any:
+    from mtp.providers import Ollama
+    
+    # Use provided base_url or default
+    host = base_url or "http://localhost:11434"
+    
+    return Ollama(
+        model=model,
+        host=host,
+        api_key=api_key,  # Optional for cloud deployments
+        think=True,
+        options={"temperature": 0},
+    )
+
+
+def _lmstudio_builder(model: str, api_key: str | None, base_url: str | None) -> Any:
+    from mtp.providers import LMStudio
+    
+    # Use provided base_url or default
+    endpoint = base_url or "http://127.0.0.1:1234/v1"
+    
+    return LMStudio(
+        model=model,
+        base_url=endpoint,
+        api_key=api_key or "lm-studio",  # LM Studio requires a dummy key
+        temperature=0.0,
+        parallel_tool_calls=True,
+    )
 
 
 PROVIDER_BUILDERS: dict[str, _ProviderBuilder] = {
@@ -132,6 +165,8 @@ PROVIDER_BUILDERS: dict[str, _ProviderBuilder] = {
     "deepseek": _deepseek_builder,
     "togetherai": _togetherai_builder,
     "fireworksai": _fireworksai_builder,
+    "ollama": _ollama_builder,
+    "lmstudio": _lmstudio_builder,
 }
 
 
@@ -140,7 +175,7 @@ def build_tui_provider(selection: ProviderSelection) -> Any:
     builder = PROVIDER_BUILDERS[provider_name]
     
     try:
-        return builder(selection.model_name, selection.api_key)
+        return builder(selection.model_name, selection.api_key, selection.base_url)
     except ImportError as e:
         # Provider SDK not installed
         module_name = str(e).split("'")[1] if "'" in str(e) else "unknown"
