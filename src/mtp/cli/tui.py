@@ -149,14 +149,16 @@ else:
         r" |_|  |_| |_| |_|     ",
     ]
 
-# Gradient colors for the logo: purple → cyan → mint
 _LOGO_GRADIENT = [
-    (167, 139, 250),  # violet
-    (149, 150, 252),  # blue-violet
-    (129, 170, 248),  # periwinkle
-    (110, 190, 244),  # sky
-    (90,  210, 235),  # cyan
-    (70,  225, 200),  # mint
+    (236, 72, 153),   # Hot Pink
+    (217, 70, 239),   # Fuchsia
+    (192, 132, 252),  # Light Purple
+    (147, 51, 234),   # Strong Violet 
+    (129, 140, 248),  # Soft Indigo
+    (59, 130, 246),   # Bright Blue
+    (56, 189, 248),   # Sky
+    (6, 182, 212),    # Cyan
+    (45, 212, 191),   # Teal
 ]
 
 
@@ -171,15 +173,23 @@ def _render_logo() -> list[str]:
 
 
 def _render_logo_gradient_sweep() -> list[str]:
-    """Render the ASCII logo with a horizontal gradient sweep per line."""
+    """Render the ASCII logo with a horizontal fluid neon sweep per line."""
     lines = []
+    # Base pink to cyan neon interpolation
+    import math
     for idx, raw_line in enumerate(_LOGO_LINES):
         rendered = ""
         for char_idx, ch in enumerate(raw_line):
-            t = char_idx / max(1, len(raw_line) - 1)
-            r = int(167 + t * (70 - 167))
-            g = int(139 + t * (225 - 139))
-            b = int(250 + t * (200 - 250))
+            # Sine wave based interpolation for smoother gradient
+            t = (char_idx / max(1, len(raw_line) - 1)) + (idx * 0.1)
+            # Oscillate between 0 and 1
+            t = (math.sin(t * math.pi - math.pi/2) + 1) / 2
+            
+            # Hot Pink to Vivid Electric Cyan
+            r = int(236 + t * (6 - 236))
+            g = int(72 + t * (182 - 72))
+            b = int(153 + t * (212 - 153))
+            
             rendered += f"\033[1;38;2;{r};{g};{b}m{ch}"
         rendered += RESET
         lines.append(_centered(rendered))
@@ -187,37 +197,37 @@ def _render_logo_gradient_sweep() -> list[str]:
 
 
 def _animate_boot(state: TUIState) -> None:
-    """Animated boot: sweep logo + stagger-reveal sections."""
+    """Animated boot: fluid neon sweep logo + cascade stagger reveal."""
     from mtp import __version__
     w = _get_term_width()
     active_model = state.codex_model if state.backend == "codex" else state.openai_model
 
     print()
-    # Animate logo line-by-line with horizontal gradient sweep
+    import math
+    
+    # Animate logo line-by-line with horizontal fluid neon sweep
     for idx, raw_line in enumerate(_LOGO_LINES):
         rendered = ""
         for char_idx, ch in enumerate(raw_line):
-            t = char_idx / max(1, len(raw_line) - 1)
-            r = int(167 + t * (70 - 167))
-            g = int(139 + t * (225 - 139))
-            b = int(250 + t * (200 - 250))
+            t = (char_idx / max(1, len(raw_line) - 1)) + (idx * 0.1)
+            t = (math.sin(t * math.pi - math.pi/2) + 1) / 2
+            
+            r = int(236 + t * (6 - 236))
+            g = int(72 + t * (182 - 72))
+            b = int(153 + t * (212 - 153))
+            
             rendered += f"\033[1;38;2;{r};{g};{b}m{ch}"
         rendered += RESET
         sys.stdout.write(_centered(rendered) + "\n")
         sys.stdout.flush()
-        time.sleep(0.025)
+        time.sleep(0.015)
 
     # Stagger-reveal the info sections
     info_lines = _build_compact_info(state, __version__, active_model, w)
     for line in info_lines:
-        # Quick fade: dim → normal
-        sys.stdout.write(f"\r{DIM}{line}{RESET}")
+        sys.stdout.write(f"{line}\n")
         sys.stdout.flush()
-        time.sleep(0.015)
-        sys.stdout.write(f"\r{line}")
-        sys.stdout.flush()
-        sys.stdout.write("\n")
-    sys.stdout.flush()
+        time.sleep(0.01)
 
 
 def _build_compact_info(state: TUIState, version: str, active_model: str | None, w: int) -> list[str]:
@@ -1830,12 +1840,17 @@ def _run_mtp_prompt(state: TUIState, prompt: str, spinner: _Spinner | None = Non
                     if mode_state["current_mode"] is not None:
                         sys.stdout.write("\n")
                     if kind == "reasoning":
-                        sys.stdout.write(f"\n  {C_LABEL}> thinking ...{RESET}\n  {C_DIM}")
+                        sys.stdout.write(f"\n  {C_LABEL}╭─ {BOLD}Reasoning Process{RESET} ──────────{RESET}\n  {C_DIM}│  ")
                     elif kind == "text":
-                        sys.stdout.write(f"{RESET}\n  {C_BRAND_BOLD}final response :-{RESET}\n  {C_TEXT}")
+                        sys.stdout.write(f"{RESET}\n  {C_RESPONSE}╰─ {BOLD}Agent Response{RESET} ───────────{RESET}\n  {C_TEXT}")
                     mode_state["current_mode"] = kind
-                
-                sys.stdout.write(message)
+
+                # Insert a vertical pipe for reasoning lines if there are newlines
+                if kind == "reasoning":
+                    formatted_msg = message.replace("\n", f"\n  {C_DIM}│  ")
+                    sys.stdout.write(formatted_msg)
+                else:
+                    sys.stdout.write(message)
                 sys.stdout.flush()
             elif kind == "tool":
                 if spinner and not mode_state["spinner_stopped"]:
@@ -1847,7 +1862,7 @@ def _run_mtp_prompt(state: TUIState, prompt: str, spinner: _Spinner | None = Non
                     mode_state["current_mode"] = None
                 
                 clean_msg = message.replace("🔧 ", "")
-                sys.stdout.write(f"\n  {C_LABEL}Tool call :- \"{clean_msg}\"{RESET}\n")
+                sys.stdout.write(f"\n  {C_ACCENT}⚡ Tool execution:_ {C_VALUE}{clean_msg}{RESET}\n")
                 sys.stdout.flush()
             else:
                 if spinner and not mode_state["spinner_stopped"]:
@@ -2842,11 +2857,11 @@ def _collect_prompt_attachments(prompt: str, cwd: Path) -> tuple[str, list[str],
 # ─────────────────────────────────────────────────────────────────────────────
 
 _SPINNER_PRESETS = {
-    "reasoning": ("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏", 0.06, "Reasoning"),
-    "streaming": ("▏▎▍▌▋▊▉█▉▊▋▌▍▎▏", 0.05, "Streaming"),
-    "tool":      ("⠿⣿⣷⣶⣦⣤⣀⣤⣦⣶", 0.08, "Running tool"),
-    "search":    ("◐◓◑◒", 0.10, "Searching"),
-    "default":   ("⣾⣽⣻⢿⡿⣟⣯⣷", 0.07, "Thinking"),
+    "reasoning": ("⠋ ⠙ ⠚ ⠔ ⠤ ⠢ ⠖ ⠲ ⠴ ⠦ ⠧ ⠇ ⠏", 0.08, "Deep reasoning"),
+    "streaming": ("▰▱▱▱▱▱▱ ▰▰▱▱▱▱▱ ▰▰▰▱▱▱▱ ▰▰▰▰▱▱▱ ▰▰▰▰▰▱▱ ▰▰▰▰▰▰▱ ▰▰▰▰▰▰▰", 0.10, "Streaming"),
+    "tool":      ("⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏", 0.08, "Executing component"),
+    "search":    ("⢄ ⢂ ⢁ ⡁ ⡈ ⡐ ⡠", 0.10, "Mapping nodes"),
+    "default":   ("⠋ ⠙ ⠚ ⠒ ⠂ ⠂ ⠒ ⠲ ⠴ ⠦ ⠖ ⠒ ⠐ ⠐ ⠒ ⠓ ⠋", 0.07, "Synthesizing"),
 }
 
 
@@ -2855,7 +2870,8 @@ class _Spinner:
 
     def __init__(self, label: str = "Thinking", preset: str = "default"):
         preset_data = _SPINNER_PRESETS.get(preset, _SPINNER_PRESETS["default"])
-        self._frames = list(preset_data[0])
+        frames_val = preset_data[0]
+        self._frames = frames_val.split() if " " in frames_val else list(frames_val)
         self._delay = preset_data[1]
         self._label = label or preset_data[2]
         self._running = False
@@ -2878,25 +2894,27 @@ class _Spinner:
 
     def _spin(self) -> None:
         idx = 0
-        # Gradient colors for spinner frames
+        # Smooth cyberpunk gradient wave for spinner frames
         spin_colors = [
-            _fg_rgb(167, 139, 250),
-            _fg_rgb(149, 155, 252),
-            _fg_rgb(129, 170, 248),
-            _fg_rgb(110, 195, 244),
-            _fg_rgb(90,  215, 235),
-            _fg_rgb(70,  230, 200),
-            _fg_rgb(90,  215, 235),
-            _fg_rgb(110, 195, 244),
-            _fg_rgb(129, 170, 248),
-            _fg_rgb(149, 155, 252),
+            _fg_rgb(236, 72, 153),  # Hot Pink
+            _fg_rgb(217, 70, 239),  # Fuchsia
+            _fg_rgb(192, 132, 252), # Purple
+            _fg_rgb(147, 51, 234),  # Violet
+            _fg_rgb(129, 140, 248), # Indigo
+            _fg_rgb(59, 130, 246),  # Blue
+            _fg_rgb(56, 189, 248),  # Sky
+            _fg_rgb(6, 182, 212),   # Cyan
+            _fg_rgb(45, 212, 191),  # Teal
         ]
+        # Reverse and combine for smooth oscillation back and forth
+        spin_colors = spin_colors + spin_colors[-2:0:-1]
+
         while self._running:
             frame = self._frames[idx % len(self._frames)]
             color = spin_colors[idx % len(spin_colors)]
             elapsed = time.monotonic() - self._start_time
-            elapsed_str = f" {C_BORDER}{elapsed:.1f}s{RESET}"
-            sys.stdout.write(f"\r  {color}{frame}{RESET} {C_DIM}{self._label}...{RESET}{elapsed_str}")
+            elapsed_str = f" {C_DIM}{elapsed:.1f}s{RESET}"
+            sys.stdout.write(f"\r  {color}{frame}{RESET} {C_ACCENT_DIM}{self._label}...{RESET}{elapsed_str}")
             sys.stdout.flush()
             idx += 1
             time.sleep(self._delay)
@@ -2948,9 +2966,9 @@ def _render_usage_bar(used: int, total: int) -> str:
         color = C_WARNING
     else:
         color = C_ERROR
-    bar = f"{color}{'█' * filled}{C_BORDER}{'░' * empty}{RESET}"
+    bar = f"{color}{'▰' * filled}{C_BORDER}{'▱' * empty}{RESET}"
     pct_str = f"{pct*100:.0f}%"
-    return f"{bar} {color}{pct_str}{RESET} {C_DIM}{used:,}/{total:,}{RESET}"
+    return f"{bar} {color}{pct_str}{RESET} {C_DIM}{used:,} / {total:,} tokens{RESET}"
 
 
 _MAX_VISIBLE_TOOLS = 3  # Show at most N tool calls before collapsing
@@ -2999,7 +3017,7 @@ def _render_prompt_and_response(result: ChatResult, state: TUIState | None = Non
 
     # Response header
     print()
-    print(f"  {C_RESPONSE}◂ Assistant{RESET}")
+    print(f"  {C_RESPONSE}◂ {BOLD}Agent Synthesis{RESET} ✨")
     
     # Extract thinking from usage_lines and show it FIRST (before response)
     thinking_line = None
@@ -3037,15 +3055,15 @@ def _render_prompt_and_response(result: ChatResult, state: TUIState | None = Non
             if not in_code:
                 in_code = True
                 code_lang = stripped.strip()[3:].strip()
-                lang_label = f" {C_DIM}{code_lang}{RESET}" if code_lang else ""
-                print(f"  {C_BORDER}┌{'─' * 40}{RESET}{lang_label}")
+                lang_label = f" {BOLD}{C_ACCENT}{code_lang.upper()}{RESET} " if code_lang else f" {BOLD}{C_ACCENT}CODE{RESET} "
+                print(f"  {C_BORDER}╭{lang_label}{C_BORDER}{'─' * 30}{RESET}")
             else:
                 in_code = False
                 code_lang = ""
-                print(f"  {C_BORDER}└{'─' * 40}{RESET}")
+                print(f"  {C_BORDER}╰{'─' * 38}{RESET}")
             continue
         if in_code:
-            print(f"  {C_BORDER}│{RESET} {C_VALUE}{stripped}{RESET}")
+            print(f"  {C_BORDER}│{RESET}  {C_VALUE}{stripped}{RESET}")
             continue
         if not stripped.strip():
             print()
