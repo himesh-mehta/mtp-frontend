@@ -87,6 +87,24 @@ mtp tui
 Recommended launch command:
 - `mtp tui` (single top-level command, consistent with existing CLI)
 
+### Features
+
+**Multi-Provider Support**:
+- Cloud providers: OpenAI, Anthropic, Google Gemini, Groq, etc.
+- Local providers: Ollama, LM Studio
+- Switch providers with `/backend <provider>`
+
+**Metrics Display**:
+- Context window usage with progress bar
+- Token metrics (input/output/total/reasoning)
+- Performance metrics (speed, duration, LLM calls)
+- Thinking tokens for supported models (Ollama)
+
+**Session Management**:
+- Persistent chat sessions
+- Session history and replay
+- Multi-turn conversations with context
+
 ### Provider Setup
 
 When switching to a new MTP provider for the first time, TUI will prompt for:
@@ -98,6 +116,34 @@ API keys are stored securely in `~/.mtp/settings/provider_settings.json` and can
 Supported providers and their default models:
 - **openai**: `gpt-4o`
 - **groq**: `llama-3.3-70b-versatile`
+- **ollama**: Auto-discovered local models
+- **lmstudio**: Auto-discovered local models
+
+### Metrics Display
+
+The TUI displays comprehensive metrics after each response:
+
+**Context Window**:
+```
+ctx [████████████████░░░░] 32,768/131,072 (25%)
+```
+
+**Thinking Tokens** (Ollama with supported models):
+```
+💭 thinking Let me calculate this step by step: 2 + 2 = 4
+```
+
+**Token Metrics**:
+```
+tokens(in/out/total/reasoning)=150/50/200/30
+```
+
+**Performance**:
+```
+llm_calls=1  duration=1.23s  speed=162.6 tokens/s
+```
+
+See [TUI Local Inference Guide](TUI_LOCAL_INFERENCE.md) for detailed metrics documentation.
 - **claude**: `claude-3-5-sonnet-20241022`
 - **gemini**: `gemini-2.0-flash-exp`
 - **openrouter**: `openai/gpt-4o`

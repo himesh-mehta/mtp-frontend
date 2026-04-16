@@ -16,11 +16,8 @@ Common optional installs:
 # Groq + dotenv helper
 pip install "mtpx[groq,dotenv]"
 
-# LM Studio local inference
-pip install "mtpx[lmstudio]"
-
-# Ollama local inference
-pip install "mtpx[ollama]"
+# Local inference (Ollama + LM Studio)
+pip install "mtpx[ollama,lmstudio]"
 
 # OpenAI + Anthropic providers
 pip install "mtpx[openai,anthropic,dotenv]"
@@ -30,6 +27,9 @@ pip install "mtpx[toolkits-web]"
 
 # DB session stores
 pip install "mtpx[stores-db]"
+
+# All providers
+pip install "mtpx[all-providers,dotenv]"
 ```
 
 ## Or from source
@@ -46,13 +46,42 @@ Install provider and env helpers separately (equivalent):
 pip install "mtpx[groq,dotenv]"
 ```
 
-## 2) Configure API key
+## 2) Configure API key (Cloud Providers)
 
-Create `.env`:
+For cloud providers, create `.env`:
 
 ```env
 GROQ_API_KEY=your_groq_api_key_here
+OPENAI_API_KEY=your_openai_api_key_here
+ANTHROPIC_API_KEY=your_anthropic_api_key_here
 ```
+
+For local providers (Ollama, LM Studio), no API key needed!
+
+## Local Inference Setup (Optional)
+
+### Ollama
+
+```bash
+# Install Ollama
+# Visit: https://ollama.com
+
+# Pull a model
+ollama pull llama3.2:3b
+
+# Verify
+ollama list
+```
+
+### LM Studio
+
+1. Download from: https://lmstudio.ai
+2. Install and launch
+3. Download a model
+4. Load the model
+5. Start local server: Developer → Local Server → Start
+
+See [TUI Local Inference Guide](TUI_LOCAL_INFERENCE.md) for detailed setup.
 
 ## CLI bootstrap (optional)
 
@@ -184,12 +213,51 @@ Notes:
 - Completion is expected via internal tool `agent.terminate(reason, summary)`.
 - Event stream includes `run_terminated` before `run_completed` when the model terminates explicitly.
 
-## 5) Next steps
+## 5) Try the Interactive TUI
+
+The MTP TUI provides an interactive terminal interface with support for both cloud and local providers:
+
+```bash
+# Launch TUI
+mtp tui
+
+# Use cloud provider (requires API key)
+/backend groq
+> Calculate 25 * 4 + 10
+
+# Or use local inference (no API key needed!)
+/backend ollama
+> What is the factorial of 5? Think step by step.
+```
+
+**TUI Features**:
+- Multi-provider support (cloud + local)
+- Real-time metrics display
+- Thinking tokens visualization (Ollama)
+- Context window tracking
+- Session persistence
+- File attachments with `@path/to/file`
+
+**Example Output with Metrics**:
+```
+> Calculate 15 * 23
+
+  ctx [█░░░░░░░░░░░░░░░░░░░] 200/32,768 (0.6%)
+  💭 thinking Let me calculate: 15 * 20 = 300, 15 * 3 = 45, 300 + 45 = 345
+  tokens(in/out/total/reasoning)=120/80/200/30  llm_calls=1  duration=1.50s  speed=133.3 tokens/s
+
+The answer is 345.
+```
+
+See [TUI Local Inference Guide](TUI_LOCAL_INFERENCE.md) for detailed TUI documentation.
+
+## 6) Next steps
 
 - Enable persistent sessions:
   - [Storage and Sessions](C:\Users\prajw\Downloads\MTP\docs\STORAGE.md)
 - Use local inference providers:
   - [Local Inference](C:\Users\prajw\Downloads\MTP\docs\LOCAL_INFERENCE.md)
+  - [TUI Local Inference Guide](C:\Users\prajw\Downloads\MTP\docs\TUI_LOCAL_INFERENCE.md)
 - Add your own provider adapter under `src/mtp/providers/`
 - Add your own toolkit under `src/mtp/toolkits/`
 - Add a transport layer integration under `src/mtp/transport/`
