@@ -157,7 +157,7 @@ if HAS_PROMPT_TOOLKIT:
             "/help", "/exit", "/compose", "/status", "/new", "/load",
             "/sessions", "/history", "/clear", "/cd", "/tools",
             "/backend", "/models", "/model", "/reasoning", "/rounds",
-            "/autoresearch", "/research", "/codex-login",
+            "/autoresearch", "/research", "/codex-login", "/sandbox",
         ]
 
         def get_completions(self, document, complete_event):
@@ -302,6 +302,37 @@ def build_prompt_session(state, banner_fn) -> "PromptSession | None":
             """Ctrl+L: Clear screen and redraw banner."""
             os.system("cls" if os.name == "nt" else "clear")
             banner_fn()
+
+        @kb.add("c-w")
+        def _cycle_sandbox_mode(event):
+            """Ctrl+W: Cycle through Codex sandbox modes."""
+            # Cycle through modes: read-only → workspace-write → danger-full-access → read-only
+            modes = ["read-only", "workspace-write", "danger-full-access"]
+            current_idx = modes.index(state.codex_sandbox_mode) if state.codex_sandbox_mode in modes else 1
+            next_idx = (current_idx + 1) % len(modes)
+            state.codex_sandbox_mode = modes[next_idx]
+            
+            # Display with appropriate color and icon
+            mode_display = {
+                "read-only": ("🔒", "Codex can only read files (safe mode)"),
+                "workspace-write": ("✓", "Codex can modify files in workspace"),
+                "danger-full-access": ("⚠", "Codex has unrestricted file access (DANGEROUS)"),
+            }
+            icon, desc = mode_display.get(state.codex_sandbox_mode, ("?", "Unknown mode"))
+            
+            # Import colors from theme
+            from .tui_theme import C_SUCCESS, C_WARNING, C_ERROR, C_DIM, RESET
+            
+            # Choose color based on mode
+            color = {
+                "read-only": C_WARNING,
+                "workspace-write": C_SUCCESS,
+                "danger-full-access": C_ERROR,
+            }.get(state.codex_sandbox_mode, C_DIM)
+            
+            # Print notification
+            print(f"\n  {color}Codex sandbox: {state.codex_sandbox_mode.upper()} {icon}{RESET}")
+            print(f"  {C_DIM}{desc}{RESET}\n")
 
         completer = MergedCompleter([
             CommandCompleter(),
