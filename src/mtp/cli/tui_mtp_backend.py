@@ -231,7 +231,11 @@ def build_mtp_agent(
     Returns:
         Configured MTP agent instance
     """
-    return Agent.MTPAgent(
+    # Debug: Print autoresearch state
+    if debug_mode:
+        print(f"[DEBUG] Building MTP agent with autoresearch={autoresearch}")
+    
+    agent = Agent.MTPAgent(
         provider=provider,
         tools=tools,
         instructions=f"You are a helpful AI assistant. Current working directory: {cwd}",
@@ -242,3 +246,13 @@ def build_mtp_agent(
         stream_tool_events=True,  # Enable tool event streaming
         stream_tool_results=False,  # Disable tool result streaming
     )
+    
+    # Debug: Verify autoresearch state after creation
+    if debug_mode:
+        print(f"[DEBUG] Agent created with autoresearch={agent.autoresearch}")
+        # Check if agent.terminate tool is registered
+        tool_names = [tool.name for tool in agent.registry.list_tools()]
+        has_terminate = "agent.terminate" in tool_names
+        print(f"[DEBUG] agent.terminate tool registered: {has_terminate}")
+    
+    return agent
