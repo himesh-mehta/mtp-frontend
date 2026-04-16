@@ -1795,7 +1795,7 @@ def _run_codex_login(state: TUIState) -> str:
     return f"{C_ERROR}{_SYM_ERR} Codex login exited with code {return_code}.{RESET}"
 
 
-def _run_mtp_prompt(state: TUIState, prompt: str) -> ChatResult:
+def _run_mtp_prompt(state: TUIState, prompt: str, spinner: _Spinner | None = None) -> ChatResult:
     """Execute a prompt using MTP provider backend."""
     # Ensure agent is initialized
     if state.agent is None:
@@ -1817,15 +1817,58 @@ def _run_mtp_prompt(state: TUIState, prompt: str) -> ChatResult:
         entry = ensure_provider_entry(settings, state.backend)
         model_name = entry.get("model") or DEFAULT_PROVIDER_MODELS.get(state.backend, "unknown")
         
+        mode_state = {"current_mode": None, "spinner_stopped": False}
+        
+        def _tui_emit(kind: str, message: str) -> None:
+            if kind in ("text", "reasoning"):
+                if spinner and not mode_state["spinner_stopped"]:
+                    spinner.stop()
+                    sys.stdout.write("\r" + " " * 40 + "\r")
+                    mode_state["spinner_stopped"] = True
+                
+                if kind != mode_state["current_mode"]:
+                    if mode_state["current_mode"] is not None:
+                        sys.stdout.write("\n")
+                    if kind == "reasoning":
+                        sys.stdout.write(f"\n  {C_LABEL}> thinking ...{RESET}\n  {C_DIM}")
+                    elif kind == "text":
+                        sys.stdout.write(f"{RESET}\n  {C_BRAND_BOLD}final response :-{RESET}\n  {C_TEXT}")
+                    mode_state["current_mode"] = kind
+                
+                sys.stdout.write(message)
+                sys.stdout.flush()
+            elif kind == "tool":
+                if spinner and not mode_state["spinner_stopped"]:
+                    spinner.stop()
+                    sys.stdout.write("\r" + " " * 40 + "\r")
+                    mode_state["spinner_stopped"] = True
+                if mode_state["current_mode"] is not None:
+                    sys.stdout.write(f"{RESET}\n")
+                    mode_state["current_mode"] = None
+                
+                clean_msg = message.replace("🔧 ", "")
+                sys.stdout.write(f"\n  {C_LABEL}Tool call :- \"{clean_msg}\"{RESET}\n")
+                sys.stdout.flush()
+            else:
+                if spinner and not mode_state["spinner_stopped"]:
+                    pass
+                if mode_state["current_mode"] is not None:
+                    sys.stdout.write(f"{RESET}\n")
+                    mode_state["current_mode"] = None
+                _emit_live_event(kind, message)
+        
         # Run MTP agent
         mtp_result = mtp_backend.run_mtp_prompt(
             agent=state.agent,
             prompt=prompt,
             max_rounds=state.max_rounds,
-            emit_live=_emit_live_event,
+            emit_live=_tui_emit,
             provider_name=state.backend,
             model_name=model_name,
         )
+        
+        if mode_state["current_mode"] is not None:
+            sys.stdout.write(f"{RESET}\n")
         
         return ChatResult(
             text=mtp_result.text,
@@ -3322,7 +3365,7 @@ def run_tui(args) -> int:
                 result.warnings = [*attachment_warnings, *result.warnings]
             else:
                 # MTP Provider backend (SDK)
-                result = _run_mtp_prompt(state, expanded_prompt)
+                result = _run_mtp_prompt(state, expanded_prompt, spinner=spinner)
                 result.attachments = attachments
                 result.warnings = [*attachment_warnings, *result.warnings]
         except KeyboardInterrupt:

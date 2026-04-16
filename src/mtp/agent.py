@@ -1845,7 +1845,22 @@ class Agent:
                     return
                 yield events.emit("round_started", round=round_idx)
                 llm_started = perf_counter()
-                action = self.provider.next_action(self.messages, planning_tools)
+                action = None
+                chunks_streamed = False
+                if hasattr(self.provider, "stream_next_action"):
+                    for chunk in self.provider.stream_next_action(self.messages, planning_tools):
+                        if hasattr(chunk, "plan") or hasattr(chunk, "response_text"):
+                            action = chunk
+                        elif isinstance(chunk, dict):
+                            ctype = chunk.get("type")
+                            cval = chunk.get("chunk", "")
+                            if ctype == "reasoning_chunk":
+                                yield events.emit("reasoning_chunk", chunk=cval, source="direct")
+                            elif ctype == "text_chunk":
+                                chunks_streamed = True
+                                yield events.emit("text_chunk", chunk=cval, source="direct")
+                if action is None:
+                    action = self.provider.next_action(self.messages, planning_tools)
                 self._normalize_plan_reasoning(action.plan, tools)
                 llm_duration = perf_counter() - llm_started
                 action_metadata = action.metadata if isinstance(action.metadata, dict) else {}
@@ -1865,11 +1880,11 @@ class Agent:
                 if action.response_text and action.plan is None:
                     self._append_message({"role": "assistant", "content": action.response_text})
                     if self.autoresearch:
-                        if stream_final:
+                        if stream_final and not chunks_streamed:
                             for chunk in self._chunk_text(action.response_text):
                                 yield events.emit("text_chunk", chunk=chunk, source="direct")
                         continue
-                    if stream_final:
+                    if stream_final and not chunks_streamed:
                         for chunk in self._chunk_text(action.response_text):
                             yield events.emit("text_chunk", chunk=chunk, source="direct")
                     yield events.emit(
@@ -2190,7 +2205,22 @@ class Agent:
                     return
                 yield events.emit("round_started", round=round_idx)
                 llm_started = perf_counter()
-                action = await self._anext_action(planning_tools)
+                action = None
+                chunks_streamed = False
+                if hasattr(self.provider, "astream_next_action"):
+                    async for chunk in self.provider.astream_next_action(self.messages, planning_tools):
+                        if hasattr(chunk, "plan") or hasattr(chunk, "response_text"):
+                            action = chunk
+                        elif isinstance(chunk, dict):
+                            ctype = chunk.get("type")
+                            cval = chunk.get("chunk", "")
+                            if ctype == "reasoning_chunk":
+                                yield events.emit("reasoning_chunk", chunk=cval, source="direct")
+                            elif ctype == "text_chunk":
+                                chunks_streamed = True
+                                yield events.emit("text_chunk", chunk=cval, source="direct")
+                if action is None:
+                    action = await self._anext_action(planning_tools)
                 self._normalize_plan_reasoning(action.plan, tools)
                 llm_duration = perf_counter() - llm_started
                 action_metadata = action.metadata if isinstance(action.metadata, dict) else {}
@@ -2210,11 +2240,11 @@ class Agent:
                 if action.response_text and action.plan is None:
                     self._append_message({"role": "assistant", "content": action.response_text})
                     if self.autoresearch:
-                        if stream_final:
+                        if stream_final and not chunks_streamed:
                             for chunk in self._chunk_text(action.response_text):
                                 yield events.emit("text_chunk", chunk=chunk, source="direct")
                         continue
-                    if stream_final:
+                    if stream_final and not chunks_streamed:
                         for chunk in self._chunk_text(action.response_text):
                             yield events.emit("text_chunk", chunk=chunk, source="direct")
                     yield events.emit(
