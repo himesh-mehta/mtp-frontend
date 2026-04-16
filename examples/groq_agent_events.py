@@ -22,7 +22,7 @@ def main() -> None:
     tools.register_toolkit_loader("shell", ShellToolkit(base_dir=pathlib.Path.cwd()))
 
     provider = Groq(
-        model="moonshotai/kimi-k2-instruct",
+        model="openai/gpt-oss-120b",
         strict_dependency_mode=True,
     )
     calculator_agent = Agent(
