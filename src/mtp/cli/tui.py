@@ -378,6 +378,7 @@ def _print_help() -> None:
             ("/clear", "Clear the terminal and redraw the banner"),
             ("/cd <dir>", "Change working directory"),
             ("/tools", "Show all tool calls from the last turn"),
+            ("/cat <hide|show>", "Hide or show the UI cat companion"),
         ]),
         ("Backend & Model", [
             ("/backend", "List all available providers"),
@@ -2703,6 +2704,25 @@ def _handle_command(state: TUIState, raw: str) -> str | None:
         state.agent = None
         _save_tui_session(state)
         return f"{C_SUCCESS}{_SYM_OK}{RESET} cwd set to {C_TEXT}{target}{RESET}. Agent reloaded."
+    if cmd == "/cat":
+        action = arg.lower()
+        if action == "hide":
+            try:
+                from . import tui_cat
+                tui_cat.hide_cat()
+            except Exception:
+                pass
+            return f"{C_SUCCESS}{_SYM_OK}{RESET} Cat companion hidden."
+        elif action == "show":
+            try:
+                from . import tui_cat
+                tui_cat.show_cat()
+            except Exception:
+                pass
+            return f"{C_SUCCESS}{_SYM_OK}{RESET} Cat companion visible."
+        else:
+            return f"{C_WARNING}Usage:{RESET} {C_CMD}/cat <hide|show>{RESET}"
+
     if cmd == "/sandbox":
         if not arg:
             # Cycle through modes: read-only → workspace-write → danger-full-access → read-only
@@ -2783,6 +2803,7 @@ def _normalize_input(raw: str) -> str:
         "cd",
         "tools",
         "sandbox",
+        "cat",
     }
     if raw.startswith("/"):
         return raw

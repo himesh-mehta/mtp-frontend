@@ -6,16 +6,17 @@ import shutil
 
 class CatEngine:
     def __init__(self):
-        # 48x24 virtual pixels = 24x12 terminal characters (using 2x2 Quadrant blocks)
-        self.width = 48
-        self.height = 24
+        # 36x18 virtual pixels = 18x9 terminal characters (using 2x2 Quadrant blocks)
+        self.width = 36
+        self.height = 18
         self.state = "idle"
+        self.is_hidden = False
         self.tick = 0.0
         self.running = False
         self.thread = None
         self._lock = threading.Lock()
         
-        # Used for smart transparent diffing
+        # Transparent diffing arrays
         self.prev_blocks = [[ "empty" for _ in range(self.width // 2)] for _ in range(self.height // 2)]
 
     def start(self):
@@ -32,6 +33,8 @@ class CatEngine:
             self.thread.join()
 
     def set_state(self, new_state):
+        if self.is_hidden and new_state != "hidden":
+            return
         if self.state != new_state:
             if new_state in ("wakeup", "response", "error"):
                 self.tick = 0.0
@@ -59,7 +62,7 @@ class CatEngine:
         term_size = shutil.get_terminal_size()
         cols = self.width // 2
         
-        if term_size.columns < 50 or term_size.lines < 20:
+        if term_size.columns < 40 or term_size.lines < 15:
             return
 
         pixels = [[None for _ in range(self.width)] for _ in range(self.height)]
@@ -188,6 +191,10 @@ class CatEngine:
 
     # --- Compositor ---
     def _render_scene(self, pixels):
+        if self.state == "hidden":
+            # Leaving pixels fully transparent will automatically erase the cat seamlessly!
+            return
+
         C_BODY = (40, 42, 54)
         C_MID = (68, 71, 90)
         C_BELLY = (248, 248, 242)
@@ -197,12 +204,10 @@ class CatEngine:
         C_ERR = (255, 85, 85)
         C_ZZZ = (189, 147, 249)
         C_DOT = (255, 184, 108)
-        
-        # Note: X coordinates are mathematically doubled (rx = 2 * ry)
-        # to guarantee proportional drawing in quadrant space since terminal pixels are 1:2
-        hx, hy = 28, 10
-        bx, by = 24, 17
-        tx, ty = 12, 18
+
+        hx, hy = 21, 7
+        bx, by = 18, 12
+        tx, ty = 9, 13
         
         breathe = 0.0
         tail_angle = 0.0
@@ -211,19 +216,19 @@ class CatEngine:
         zzz_frame = None
 
         if self.state == "idle":
-            breathe = math.sin(self.tick * 2) * 1.2
+            breathe = math.sin(self.tick * 2) * 1.5
             hy += breathe * 0.4
             by -= breathe * 0.2
             eye_state = "closed"
             tail_angle = -180
             z_cycle = (self.tick % 4.0) / 4.0
             if z_cycle > 0.1:
-                zx = 32 + z_cycle * 12
-                zy = 4 - z_cycle * 8
+                zx = 24 + z_cycle * 9
+                zy = 4 - z_cycle * 6
                 zzz_frame = (int(zx), int(zy))
                 
         elif self.state == "wakeup":
-            head_dy = -4 * min(1.0, self.tick * 4)
+            head_dy = -3 * min(1.0, self.tick * 4)
             hy += head_dy
             eye_state = "open"
             tail_angle = -180 + min(1.0, self.tick * 3) * 140
@@ -232,7 +237,7 @@ class CatEngine:
             eye_state = "open"
             hy -= 3
             tail_angle = math.sin(self.tick * 6) * 20 - 40
-            dot_pos = 28 + math.sin(self.tick * 3) * 16
+            dot_pos = 21 + math.sin(self.tick * 3) * 12
             
         elif self.state == "response":
             eye_state = "happy"
@@ -244,14 +249,14 @@ class CatEngine:
         elif self.state == "error":
             eye_state = "wide"
             C_BODY = C_ERR
-            hy -= 4
+            hy -= 3
             tail_angle = -90
 
         # --- Draw Tail (Layer 1) ---
-        for i in range(12):
-            dist = i * 2.0
+        for i in range(10):
+            dist = i * 1.8
             rad = tail_angle * math.pi / 180.0
-            tr = 3.5 - (i * 0.15)
+            tr = 3.0 - (i * 0.2)
             if self.state == "error":
                 tr += 1.5
             px = tx + math.cos(rad) * (dist * 2.0)
@@ -259,65 +264,65 @@ class CatEngine:
             self._ellipse(pixels, px, py, int(tr*2), int(tr), C_MID)
 
         # --- Draw Body (Layer 2) ---
-        breathe_rx = breathe * 1.5
-        breathe_ry = breathe * 0.8
-        self._ellipse(pixels, bx, by, 16 + breathe_rx, 7 + breathe_ry, C_BODY)
-        self._ellipse(pixels, bx + 3, by + 1.5, 10 + breathe_rx, 4 + breathe_ry, C_BELLY)
+        breathe_rx = breathe * 1.2
+        breathe_ry = breathe * 0.6
+        self._ellipse(pixels, bx, by, 12 + breathe_rx, 6 + breathe_ry, C_BODY)
+        self._ellipse(pixels, bx + 2.5, by + 1.2, 8 + breathe_rx, 3.5 + breathe_ry, C_BELLY)
 
         # --- Draw Head & Features (Layer 3) ---
-        self._ellipse(pixels, hx, hy, 12, 6, C_BODY)
+        self._ellipse(pixels, hx, hy, 9, 4.5, C_BODY)
         
-        # Ears (Perfect geometric solid triangles)
+        # Ears 
         if self.state == "error":
-            self._triangle(pixels, hx-11, hy-1, hx-5, hy-4, hx-3, hy-1, C_BODY)
-            self._triangle(pixels, hx+11, hy-1, hx+5, hy-4, hx+3, hy-1, C_BODY)
+            self._triangle(pixels, hx-8, hy-1, hx-4, hy-3, hx-2, hy-1, C_BODY)
+            self._triangle(pixels, hx+8, hy-1, hx+4, hy-3, hx+2, hy-1, C_BODY)
         else:
-            self._triangle(pixels, hx-10, hy-1, hx-4, hy-2, hx-8, hy-8, C_BODY)
-            self._triangle(pixels, hx-9, hy-2, hx-5, hy-3, hx-7.5, hy-6, C_PINK)
-            self._triangle(pixels, hx+10, hy-1, hx+4, hy-2, hx+8, hy-8, C_BODY)
-            self._triangle(pixels, hx+9, hy-2, hx+5, hy-3, hx+7.5, hy-6, C_PINK)
+            self._triangle(pixels, hx-7, hy-1, hx-3, hy-1.5, hx-6, hy-6, C_BODY)
+            self._triangle(pixels, hx-6, hy-1.5, hx-3.5, hy-2, hx-5.5, hy-4.5, C_PINK)
+            self._triangle(pixels, hx+7, hy-1, hx+3, hy-1.5, hx+6, hy-6, C_BODY)
+            self._triangle(pixels, hx+6, hy-1.5, hx+3.5, hy-2, hx+5.5, hy-4.5, C_PINK)
 
         # Muzzle / cheeks
-        self._ellipse(pixels, hx-3.5, hy+2.5, 4, 3, C_BELLY)
-        self._ellipse(pixels, hx+3.5, hy+2.5, 4, 3, C_BELLY)
-        self._ellipse(pixels, hx, hy+1.5, 2, 1, C_PINK)
+        self._ellipse(pixels, hx-2.5, hy+2, 3, 2, C_BELLY)
+        self._ellipse(pixels, hx+2.5, hy+2, 3, 2, C_BELLY)
+        self._ellipse(pixels, hx, hy+1, 1.5, 1, C_PINK)
 
         # Eyes & Expressions
         if eye_state == "closed":
-            self._rect(pixels, hx-7, hy-2, 4, 1, C_PUPIL)
-            self._rect(pixels, hx+3, hy-2, 4, 1, C_PUPIL)
+            self._rect(pixels, hx-5, hy-1.5, 3, 1, C_PUPIL)
+            self._rect(pixels, hx+3, hy-1.5, 3, 1, C_PUPIL)
         elif eye_state == "open":
             pupil_dx = 0
             if dot_pos:
-                if dot_pos > hx + 4: pupil_dx = 2
-                elif dot_pos < hx - 4: pupil_dx = -2
+                if dot_pos > hx + 3: pupil_dx = 1
+                elif dot_pos < hx - 3: pupil_dx = -1
                 
-            self._rect(pixels, hx-7, hy-3, 4, 3, C_EYE)
-            self._rect(pixels, hx+3, hy-3, 4, 3, C_EYE)
-            self._rect(pixels, hx-6 + pupil_dx, hy-2, 2, 2, C_PUPIL)
-            self._rect(pixels, hx+4 + pupil_dx, hy-2, 2, 2, C_PUPIL)
+            self._rect(pixels, hx-5, hy-2, 3, 2, C_EYE)
+            self._rect(pixels, hx+3, hy-2, 3, 2, C_EYE)
+            self._rect(pixels, hx-4 + pupil_dx, hy-1.5, 1, 1.5, C_PUPIL)
+            self._rect(pixels, hx+4 + pupil_dx, hy-1.5, 1, 1.5, C_PUPIL)
         elif eye_state == "happy":
-            self._rect(pixels, hx-7, hy-2, 4, 1, C_EYE)
-            self._rect(pixels, hx+3, hy-2, 4, 1, C_EYE)
-            self._rect(pixels, hx-7, hy-3, 1, 1, C_EYE)
-            self._rect(pixels, hx-4, hy-3, 1, 1, C_EYE)
-            self._rect(pixels, hx+3, hy-3, 1, 1, C_EYE)
-            self._rect(pixels, hx+6, hy-3, 1, 1, C_EYE)
+            self._rect(pixels, hx-5, hy-1, 3, 1, C_EYE)
+            self._rect(pixels, hx+3, hy-1, 3, 1, C_EYE)
+            self._rect(pixels, hx-5, hy-2, 1, 1, C_EYE)
+            self._rect(pixels, hx-3, hy-2, 1, 1, C_EYE)
+            self._rect(pixels, hx+3, hy-2, 1, 1, C_EYE)
+            self._rect(pixels, hx+5, hy-2, 1, 1, C_EYE)
         elif eye_state == "wide":
-            self._ellipse(pixels, hx-5, hy-2, 4, 3, C_BELLY)
-            self._ellipse(pixels, hx+5, hy-2, 4, 3, C_BELLY)
-            self._rect(pixels, hx-6, hy-2.5, 2, 2, C_PUPIL)
-            self._rect(pixels, hx+4, hy-2.5, 2, 2, C_PUPIL)
+            self._ellipse(pixels, hx-4, hy-1.5, 3, 2, C_BELLY)
+            self._ellipse(pixels, hx+4, hy-1.5, 3, 2, C_BELLY)
+            self._rect(pixels, hx-4.5, hy-2, 1.5, 1.5, C_PUPIL)
+            self._rect(pixels, hx+3.5, hy-2, 1.5, 1.5, C_PUPIL)
 
         # --- FX overlay ---
         if dot_pos:
-            self._ellipse(pixels, int(dot_pos), int(hy-8), 3, 2, C_DOT)
+            self._ellipse(pixels, int(dot_pos), int(hy-6), 2, 1, C_DOT)
 
         if zzz_frame:
             zx, zy = zzz_frame
-            self._rect(pixels, zx, zy, 4, 1, C_ZZZ)
-            self._rect(pixels, zx+2, zy+1, 2, 1, C_ZZZ)
-            self._rect(pixels, zx, zy+2, 4, 1, C_ZZZ)
+            self._rect(pixels, zx, zy, 3, 1, C_ZZZ)
+            self._rect(pixels, zx+1, zy+1, 1, 1, C_ZZZ)
+            self._rect(pixels, zx, zy+2, 3, 1, C_ZZZ)
 
 _ENGINE = CatEngine()
 
@@ -327,4 +332,12 @@ def start_cat_ui():
 
 def set_cat_state(new_state: str):
     _ENGINE.set_state(new_state)
+
+def hide_cat():
+    _ENGINE.is_hidden = True
+    _ENGINE.set_state("hidden")
+
+def show_cat():
+    _ENGINE.is_hidden = False
+    _ENGINE.set_state("idle")
 
