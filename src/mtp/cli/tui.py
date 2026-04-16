@@ -2957,6 +2957,32 @@ def _render_prompt_and_response(result: ChatResult, state: TUIState | None = Non
     # Response header
     print()
     print(f"  {C_RESPONSE}◂ Assistant{RESET}")
+    
+    # Extract thinking from usage_lines and show it FIRST (before response)
+    thinking_line = None
+    if result.usage_lines:
+        for uline in result.usage_lines:
+            if uline.startswith("thinking="):
+                thinking_line = uline
+                break
+    
+    # Render thinking tokens prominently BEFORE response text
+    if thinking_line:
+        thinking_text = thinking_line.replace("thinking=", "")
+        print()  # Blank line before thinking
+        # Wrap long thinking text across multiple lines
+        max_width = w - 20  # Leave margin
+        if len(thinking_text) > max_width:
+            # Wrap thinking text (textwrap already imported at module level)
+            wrapped_lines = textwrap.wrap(thinking_text, width=max_width, break_long_words=False, break_on_hyphens=False)
+            for i, line in enumerate(wrapped_lines):
+                if i == 0:
+                    print(f"  {C_ACCENT}💭 thinking{RESET} {C_DIM}{line}{RESET}")
+                else:
+                    print(f"  {C_DIM}{'':12}{line}{RESET}")
+        else:
+            print(f"  {C_ACCENT}💭 thinking{RESET} {C_DIM}{thinking_text}{RESET}")
+        print()  # Blank line after thinking
 
     # Indent and wrap markdown-ish response text with inline markup.
     in_code = False
@@ -3022,16 +3048,13 @@ def _render_prompt_and_response(result: ChatResult, state: TUIState | None = Non
         print()
         # Try to render a context bar from usage lines
         ctx_match = None
-        thinking_line = None
         other_lines = []
         
         for uline in result.usage_lines:
             m = re.match(r"context_window=([\d,]+)/([\d,]+)", uline)
             if m:
                 ctx_match = m
-            elif uline.startswith("thinking="):
-                thinking_line = uline
-            else:
+            elif not uline.startswith("thinking="):  # Skip thinking line (already shown above)
                 other_lines.append(uline)
         
         # Render context bar if available
@@ -3039,11 +3062,6 @@ def _render_prompt_and_response(result: ChatResult, state: TUIState | None = Non
             used = int(ctx_match.group(1).replace(",", ""))
             total = int(ctx_match.group(2).replace(",", ""))
             print(f"  {C_DIM}ctx{RESET} {_render_usage_bar(used, total)}")
-        
-        # Render thinking tokens prominently if available
-        if thinking_line:
-            thinking_text = thinking_line.replace("thinking=", "")
-            print(f"  {C_ACCENT}💭 thinking{RESET} {C_DIM}{thinking_text}{RESET}")
         
         # Render other metrics compactly
         if other_lines:
