@@ -70,6 +70,18 @@ def run_mtp_prompt(
     tool_events: list[str] = []
     final_text_chunks: list[str] = []
     
+    # Metrics tracking
+    total_input_tokens = 0
+    total_output_tokens = 0
+    total_tokens = 0
+    reasoning_tokens = 0
+    cached_input_tokens = 0
+    cache_write_tokens = 0
+    cache_creation_input_tokens = 0
+    cache_read_input_tokens = 0
+    llm_calls = 0
+    total_duration = 0.0
+    
     try:
         if emit_live:
             emit_live("status", "Sending request to provider...")
@@ -84,8 +96,26 @@ def run_mtp_prompt(
         ):
             event_type = event.get("type")
             
+            # Handle LLM response events to capture metrics
+            if event_type == "llm_response":
+                usage = event.get("usage", {})
+                if isinstance(usage, dict):
+                    total_input_tokens += usage.get("input_tokens", 0)
+                    total_output_tokens += usage.get("output_tokens", 0)
+                    total_tokens += usage.get("total_tokens", 0)
+                    reasoning_tokens += usage.get("reasoning_tokens", 0)
+                    cached_input_tokens += usage.get("cached_input_tokens", 0)
+                    cache_write_tokens += usage.get("cache_write_tokens", 0)
+                    cache_creation_input_tokens += usage.get("cache_creation_input_tokens", 0)
+                    cache_read_input_tokens += usage.get("cache_read_input_tokens", 0)
+                    llm_calls += 1
+                
+                duration = event.get("duration_seconds", 0.0)
+                if duration:
+                    total_duration += duration
+            
             # Handle tool events
-            if event_type == "tool_started":
+            elif event_type == "tool_started":
                 tool_name = event.get("tool_name", "unknown")
                 reasoning = event.get("reasoning", "")
                 if reasoning:
@@ -123,8 +153,31 @@ def run_mtp_prompt(
         # Combine final text
         result_text = "".join(final_text_chunks) if final_text_chunks else ""
         
-        # Extract usage metrics
-        usage_lines = _extract_usage_metrics(agent, result_text)
+        # Format usage metrics
+        usage_lines = []
+        if llm_calls > 0:
+            # Calculate tokens per second
+            tokens_per_sec = (total_tokens / total_duration) if total_duration > 0 else 0
+            
+            # Main token line
+            usage_lines.append(
+                f"tokens(in/out/total/reasoning)={total_input_tokens}/{total_output_tokens}/{total_tokens}/{reasoning_tokens}"
+            )
+            
+            # Cache tokens (only if any cache tokens exist)
+            if any([cached_input_tokens, cache_write_tokens, cache_creation_input_tokens, cache_read_input_tokens]):
+                usage_lines.append(
+                    f"cache(input/write/create/read)={cached_input_tokens}/{cache_write_tokens}/{cache_creation_input_tokens}/{cache_read_input_tokens}"
+                )
+            
+            # Performance metrics
+            usage_lines.append(f"llm_calls={llm_calls}")
+            usage_lines.append(f"duration={total_duration:.2f}s")
+            if tokens_per_sec > 0:
+                usage_lines.append(f"speed={tokens_per_sec:.1f} tokens/s")
+        else:
+            # Fallback if no metrics captured
+            usage_lines.append("tokens(in/out/total/reasoning)=unknown/unknown/unknown/unknown")
         
         return MTPRunResult(
             text=result_text,
@@ -141,7 +194,7 @@ def run_mtp_prompt(
             text=f"Error: {error_msg}",
             tool_events=[],
             warnings=warnings,
-            usage_lines=[],
+            usage_lines=["tokens(in/out/total/reasoning)=error/error/error/error"],
         )
 
 
