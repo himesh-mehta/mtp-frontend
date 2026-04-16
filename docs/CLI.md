@@ -87,9 +87,34 @@ mtp tui
 Recommended launch command:
 - `mtp tui` (single top-level command, consistent with existing CLI)
 
+### Provider Setup
+
+When switching to a new MTP provider for the first time, TUI will prompt for:
+1. **API Key**: Enter your provider API key (validated to prevent masked keys)
+2. **Model Selection**: Choose a model or press Enter for default
+
+API keys are stored securely in `~/.mtp/settings/provider_settings.json` and can be managed with `/apikey` commands.
+
+Supported providers and their default models:
+- **openai**: `gpt-4o`
+- **groq**: `llama-3.3-70b-versatile`
+- **claude**: `claude-3-5-sonnet-20241022`
+- **gemini**: `gemini-2.0-flash-exp`
+- **openrouter**: `openai/gpt-4o`
+- **mistral**: `mistral-large-latest`
+- **cohere**: `command-r-plus`
+- **sambanova**: `Meta-Llama-3.1-70B-Instruct`
+- **cerebras**: `llama3.1-70b`
+- **deepseek**: `deepseek-chat`
+- **togetherai**: `meta-llama/Llama-3.3-70B-Instruct-Turbo`
+- **fireworksai**: `accounts/fireworks/models/llama-v3p1-70b-instruct`
+
 Backends:
 - `codex`: bridges to official Codex CLI (`codex exec`) and uses your Codex login session.
-- `mtp-openai`: uses MTP SDK with `OpenAI` provider and local toolkits.
+- **MTP Providers** (12 supported): `openai`, `groq`, `claude`, `gemini`, `openrouter`, `mistral`, `cohere`, `sambanova`, `cerebras`, `deepseek`, `togetherai`, `fireworksai`
+  - Each uses MTP SDK with the respective provider and local toolkits
+  - Requires provider API key configuration
+  - Supports custom model selection and management
 
 Codex continuity behavior:
 - TUI now persists Codex resume session/thread IDs in the local session DB.
@@ -97,9 +122,11 @@ Codex continuity behavior:
 - If a saved Codex thread is no longer resumable, TUI falls back to a fresh Codex session and records a warning.
 
 Default TUI model settings:
-- codex backend model: `gpt-5.3-codex`
-- mtp-openai backend model: `gpt-5.4-mini`
-- default reasoning effort: `medium`
+- codex backend model: `gpt-5.4-codex`
+- MTP providers: Each has a default model (e.g., `gpt-4o` for OpenAI, `llama-3.3-70b-versatile` for Groq)
+- default reasoning effort: `medium` (Codex only)
+- default autoresearch: `off` (MTP providers only)
+- default context window: `240,000` tokens (MTP providers)
 
 Examples:
 
@@ -107,39 +134,74 @@ Examples:
 # Default backend is codex
 mtp tui
 
-# Start directly in MTP OpenAI backend
-mtp tui --backend mtp-openai --openai-model gpt-5.4-mini
+# Start with Groq provider
+mtp tui --backend groq
+
+# Start with OpenRouter provider and custom model
+mtp tui --backend openrouter
+
+# Start with Claude provider
+mtp tui --backend claude
 
 # Set initial reasoning effort for codex backend
 mtp tui --reasoning-effort high
 
-# Enable autoresearch in MTP OpenAI backend
-mtp tui --backend mtp-openai --autoresearch --research-instructions "Verify completion before terminating."
+# Enable autoresearch in MTP providers
+mtp tui --backend groq --autoresearch --research-instructions "Verify completion before terminating."
 ```
 
 Inside TUI:
-- `/models`
-- `/backend codex|mtp-openai`
-- `/model <name|1..4|default>`
-- `/reasoning <none|low|medium|high|xhigh>`
-- `/rounds <n>`
-- `/codex-login`
-- `/autoresearch on|off`
-- `/research <text>`
-- `/status`
-- `/exit`
 
-Model shortcuts:
+**Backend & Model Management:**
+- `/backend` - List all available providers with configuration status
+- `/backend <provider>` - Switch to provider (codex, openai, groq, claude, gemini, openrouter, mistral, cohere, sambanova, cerebras, deepseek, togetherai, fireworksai)
+- `/models` - Show all models for all providers
+- `/model <name>` - Switch to model for current provider
+- `/model add <provider> <name>` - Add custom model to any provider
+
+**API Key Management:**
+- `/apikey` - List all API keys (masked)
+- `/apikey set <provider> <key>` - Set/update API key
+- `/apikey delete <provider>` - Delete API key
+- `/apikey show <provider>` - Show full API key (use with caution)
+
+**Configuration:**
+- `/reasoning <none|low|medium|high|xhigh>` - Set reasoning effort (Codex only)
+- `/rounds <n>` - Set max_rounds (MTP providers)
+- `/autoresearch on|off` - Toggle autoresearch (MTP providers)
+- `/research <text>` - Set research instructions
+
+**Session & Info:**
+- `/status` - Show current session status
+- `/codex-login` - Run official codex login flow
+- `/exit` - Exit TUI
+
+Model shortcuts (Codex only):
 - `1 -> gpt-5.4`
 - `2 -> gpt-5.4-mini`
 - `3 -> gpt-5.3-codex`
 - `4 -> gpt-5.2`
+
+For MTP providers, use full model names or add custom models with `/model add <provider> <name>`.
 
 Prompt UX:
 - Use `@path/to/file.py` directly in your prompt to inject file context into the request.
 - Example: `debug this @src/mtp/cli/tui.py and suggest a fix`
 
 Usage visibility:
-- After each response, TUI prints a `Usage` block with token totals and context-window usage (when model window is known).
-- `/status` includes the latest captured usage snapshot.
-- Rate-limit remaining is shown as best-effort for codex backend and header-backed for `mtp-openai` when OpenAI rate-limit headers are returned.
+- After each response, TUI prints usage metrics including:
+  - **Context bar**: Visual progress bar showing token usage (e.g., `ctx ▌███░░░░░░░░░░░░░░░░ 3% 7,112/240,000`)
+  - **Token breakdown**: `tokens(in/out/total/reasoning)=6316/796/7112/643`
+  - **Cache metrics**: `cache(input/write/create/read)=1280/0/0/0` (when applicable)
+  - **Performance**: `llm_calls=4`, `duration=10.80s`, `speed=658.5 tokens/s`
+- `/status` includes the latest captured usage snapshot
+- **Footer toolbar** shows:
+  - **Codex**: `model · reasoning · backend · turns`
+  - **MTP providers**: `model · autoresearch on/off · backend · turns`
+- Context bar color-codes usage: 🟢 Green (0-60%), 🟡 Yellow (60-85%), 🔴 Red (85-100%)
+
+Tool event streaming (MTP providers):
+- Real-time tool execution visibility with `stream_tool_events=True`
+- Shows tool name and reasoning: `🔧 file_read: Reading configuration file`
+- Shows completion status: `✓ file_read completed` or `✗ file_read failed`
+- Tool results are hidden by default (`stream_tool_results=False`) for cleaner output
