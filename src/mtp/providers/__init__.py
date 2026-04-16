@@ -8,6 +8,8 @@ _EXPORTS: dict[str, tuple[str, str]] = {
     "GroqToolCallingProvider": (".groq_provider", "GroqToolCallingProvider"),
     "OpenRouterToolCallingProvider": (".openrouter_provider", "OpenRouterToolCallingProvider"),
     "OpenAIToolCallingProvider": (".openai_provider", "OpenAIToolCallingProvider"),
+    "LMStudioToolCallingProvider": (".lmstudio_provider", "LMStudioToolCallingProvider"),
+    "OllamaToolCallingProvider": (".ollama_provider", "OllamaToolCallingProvider"),
     "GeminiToolCallingProvider": (".gemini_provider", "GeminiToolCallingProvider"),
     "AnthropicToolCallingProvider": (".anthropic_provider", "AnthropicToolCallingProvider"),
     "SambaNovaToolCallingProvider": (".sambanova_provider", "SambaNovaToolCallingProvider"),
@@ -23,6 +25,8 @@ _ALIASES: dict[str, str] = {
     "Groq": "GroqToolCallingProvider",
     "OpenRouter": "OpenRouterToolCallingProvider",
     "OpenAI": "OpenAIToolCallingProvider",
+    "LMStudio": "LMStudioToolCallingProvider",
+    "Ollama": "OllamaToolCallingProvider",
     "Gemini": "GeminiToolCallingProvider",
     "Anthropic": "AnthropicToolCallingProvider",
     "SambaNova": "SambaNovaToolCallingProvider",
@@ -52,4 +56,3 @@ def __getattr__(name: str) -> Any:
     if name in _EXPORTS or name in _ALIASES:
         return _load(name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-
