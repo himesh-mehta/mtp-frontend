@@ -237,6 +237,7 @@ mtp tui
 - Context window tracking
 - Session persistence
 - File attachments with `@path/to/file`
+- **Modern Aesthetics**: Animated cat companion, eye-tracking cursor, "Phosphor Decay" typewriter effects, and dynamic telemetry HUD.
 
 **Example Output with Metrics**:
 ```

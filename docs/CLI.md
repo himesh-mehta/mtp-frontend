@@ -105,6 +105,13 @@ Recommended launch command:
 - Session history and replay
 - Multi-turn conversations with context
 
+**Modern UI/UX & Aesthetics**:
+- **Interactive Cat Companion**: An animated terminal cat that tracks your input cursor and reacts to generation states.
+- **Nerd Font Acceleration**: High-fidelity icon support for specialized developer fonts.
+- **Phosphor Decay**: "Hot ink" typewriter effect where streaming text appears bright before "cooling" into the layout.
+- **Dynamic Feedback**: Input pulse animations and smooth toast transitions for tactile responsiveness.
+- **Telemetry HUD**: Right-gutter sidebar displaying CWD, Sandbox mode, and attachment metrics.
+
 ### Provider Setup
 
 When switching to a new MTP provider for the first time, TUI will prompt for:
@@ -216,6 +223,8 @@ Inside TUI:
 - `/rounds <n>` - Set max_rounds (MTP providers)
 - `/autoresearch on|off` - Toggle autoresearch (MTP providers)
 - `/research <text>` - Set research instructions
+- `/nerdfont <on|off>` - Toggle Nerd Font symbols (requires font support)
+- `/nf <on|off>` - Shortcut for `/nerdfont`
 
 **Session & Info:**
 - `/status` - Show current session status
@@ -251,3 +260,15 @@ Tool event streaming (MTP providers):
 - Shows tool name and reasoning: `🔧 file_read: Reading configuration file`
 - Shows completion status: `✓ file_read completed` or `✗ file_read failed`
 - Tool results are hidden by default (`stream_tool_results=False`) for cleaner output
+
+### Aesthetics & Customization
+
+**Nerd Font Mode**:
+To enable high-fidelity icons, ensure you have a [Nerd Font](https://www.nerdfonts.com/) installed (e.g., FiraCode NF) and run:
+`/nerdfont on`
+*Note: Requires a CLI restart to apply all glyph changes.*
+
+**Cat Companion Commands**:
+- `/cat hide` - Disable the terminal cat and telemetry HUD
+- `/cat show` - Re-enable the companion
+- **Eye Tracking**: The cat physically follows your cursor laterally as you type in the prompt.
