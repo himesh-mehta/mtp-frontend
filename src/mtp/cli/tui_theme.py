@@ -261,3 +261,35 @@ def input_box_bottom(width: int | None = None) -> str:
     """Render the bottom border of an input box."""
     w = (width or get_term_width()) - 2
     return f"{C_BORDER}{SYM_BL}{SYM_RULE * w}{SYM_BR}{RESET}"
+
+
+def gradient_progress_bar(pct: float, width: int = 20) -> str:
+    """Render a gradient progress bar based on percentage (0.0 to 100.0)."""
+    # Clamp percentage
+    pct = max(0.0, min(100.0, pct))
+    
+    filled_chars = int((pct / 100.0) * width)
+    empty_chars = width - filled_chars
+    
+    char_fill = "▆" if UNICODE_ENABLED else "="
+    char_empty = "░" if UNICODE_ENABLED else "-"
+    
+    # Gradient starts at Mint Green (C_SUCCESS), through Amber (C_WARNING), to Neon Rose (C_ERROR)
+    # 52, 211, 153 -> 251, 191, 36 -> 244, 63, 94
+    
+    if pct < 50.0:
+        # Interpolate Green to Amber
+        t = pct / 50.0
+        r = int(52 + t * (251 - 52))
+        g = int(211 + t * (191 - 211))
+        b = int(153 + t * (36 - 153))
+    else:
+        # Interpolate Amber to Red
+        t = (pct - 50.0) / 50.0
+        r = int(251 + t * (244 - 251))
+        g = int(191 + t * (63 - 191))
+        b = int(36 + t * (94 - 36))
+        
+    color_ansi = _fg_rgb(r, g, b)
+    
+    return f"{color_ansi}{char_fill * filled_chars}{RESET}{C_BORDER}{char_empty * empty_chars}{RESET}"
