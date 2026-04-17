@@ -176,6 +176,14 @@ my_store = MySQLSessionStore(
 )
 ```
 
+**TUI Session Management:**
+The MTP TUI provides enhanced session management with:
+- **Auto-generated titles** from your first message (e.g., "How do I implement" from "How do I implement authentication")
+- **Centralized storage** in `~/.mtp/sessions/` - all sessions from all projects in one place
+- **Directory grouping** - sessions organized by project when listed
+- **Cross-project access** - resume sessions from any directory
+- Use `/sessions` to list all sessions, `/new [label]` to start a new session with optional custom label
+
 ## Run examples
 
 ```bash

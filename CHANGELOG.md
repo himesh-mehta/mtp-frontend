@@ -5,6 +5,24 @@ All notable changes to MTPX will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **TUI Session Management Enhancements**:
+  - Auto-generated session titles from first user message (extracts first 3-4 words)
+  - Centralized session storage in `~/.mtp/sessions/` (all projects in one location)
+  - Directory-based session grouping in `/sessions` list
+  - Current directory sessions shown first (marked with ●)
+  - Smart title generation removes file attachments (@file) and cleans whitespace
+  - Fallback to "Quick chat" for very short prompts
+  - Manual labels via `/new [label]` still supported
+  - Sessions accessible from any directory
+  - Sessions persist even if project directories are deleted
+
+### Changed
+- **TUI Session Storage**: Default `--session-db` path changed from `tmp/mtp_tui_sessions` to `~/.mtp/sessions/`
+- **Session Display**: `/sessions` command now groups sessions by working directory with visual hierarchy
+
 ## [0.1.15] - 2026-04-17
 
 ### Added
