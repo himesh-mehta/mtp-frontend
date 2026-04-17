@@ -368,12 +368,19 @@ def build_prompt_session(state, banner_fn) -> "PromptSession | None":
 
         @kb.add("<any>")
         def _(event):
+            event.app.current_buffer.insert_text(event.data)
             try:
                 from . import tui_cat
                 tui_cat.set_cat_state("wakeup")
+                # Feed cursor x coordinates back to Cat for interactive eye tracking
+                buf = event.app.current_buffer
+                col = buf.document.cursor_position_col
+                # Assume typical text input width of 60 chars before wrapping
+                ratio = min(1.0, max(0.0, col / 60.0))
+                if tui_cat._ENGINE:
+                    tui_cat._ENGINE.set_cursor_ratio(ratio)
             except Exception:
                 pass
-            event.app.current_buffer.insert_text(event.data)
 
         completer = MergedCompleter([
             CommandCompleter(),

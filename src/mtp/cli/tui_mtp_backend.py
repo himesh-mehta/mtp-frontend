@@ -12,6 +12,7 @@ from time import perf_counter
 from typing import Any, Callable
 
 from mtp import Agent
+from .tui_theme import SYM_OK, SYM_ERR
 from .tui_model_context import get_context_window, format_context_usage
 
 
@@ -152,9 +153,16 @@ def run_mtp_prompt(
                 tool_name = event.get("tool_name", "unknown")
                 success = event.get("success", False)
                 if success:
-                    tool_events.append(f"  ✓ {tool_name} completed")
+                    msg = f"  {SYM_OK} {tool_name} completed"
+                    tool_events.append(msg)
+                    if emit_live:
+                        emit_live("tool_end", f"{SYM_OK} {tool_name} completed")
                 else:
-                    tool_events.append(f"  ✗ {tool_name} failed")
+                    msg = f"  {SYM_ERR} {tool_name} failed"
+                    tool_events.append(msg)
+                    if emit_live:
+                        emit_live("tool_end", f"{SYM_ERR} {tool_name} failed")
+                        
             elif event_type == "reasoning_chunk":
                 chunk = event.get("chunk", "")
                 thinking_chunks.append(chunk)
