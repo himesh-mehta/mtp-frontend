@@ -1,119 +1,36 @@
-# MTP Frontend
+This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
 
-This repository contains the frontend for **MTP Protocol**, a Next.js-based product site for the **Model Tool Protocol**.
+## Getting Started
 
-The site is structured as a polished marketing and documentation experience rather than a generic starter app. It presents:
-
-- A landing page that explains the protocol and drives users into the docs
-- A documentation system with categorized technical content
-- A dashboard view for system health and provider status
-- An execution flow visualizer for agent planning and task resolution
-- An interactive playground-style UI for trying agent workflows
-
-## What the site is about
-
-MTP is presented in the app as an agent orchestration framework that separates model reasoning from environment execution.
-
-The core idea shown throughout the UI and docs is:
-
-- models produce structured execution plans
-- the runtime validates and resolves those plans
-- tools execute under policy control
-- results are fed back into state for the next step
-
-The docs also describe supporting concepts such as:
-
-- DAG-based execution plans
-- tool orchestration and tool registries
-- multi-model provider support
-- policy enforcement
-- persistence across sessions
-- streaming and transport layers
-- MCP interoperability
-
-## Main Routes
-
-- `/` - marketing landing page with hero content, architecture highlights, and calls to action
-- `/docs` - redirects to the documentation introduction
-- `/docs/[slug]` - documentation pages generated from `lib/docs-content.ts`
-- `/dashboard` - mock system dashboard with provider health cards and runtime metrics
-- `/execution` - execution flow visualization showing planning and branching task execution
-- `/playground` - chat-like agent playground with provider, model, and tool controls
-
-## Documentation System
-
-The docs are driven by the content registry in `lib/docs-content.ts`.
-
-That file defines:
-
-- the docs sidebar sections
-- slug lookup helpers
-- page content blocks
-
-The docs UI in `app/docs/layout.tsx` provides:
-
-- a fixed top header
-- a collapsible left sidebar
-- docs search filtering
-- a floating "Ask AI" action button
-
-The individual docs pages in `app/docs/[slug]/page.tsx` render:
-
-- structured text blocks
-- code samples
-- lists
-- callouts
-- tables
-- previous/next navigation
-- in-page section navigation
-
-## Tech Stack
-
-- Next.js 16
-- React 19
-- TypeScript
-- Tailwind CSS 4
-- Framer Motion
-- Lucide React icons
-- `clsx` and `tailwind-merge` utilities
-- Google fonts via `next/font`:
-  - Inter
-  - Geist Mono
-
-## Development
-
-Install dependencies and run the development server:
+First, run the development server:
 
 ```bash
-npm install
 npm run dev
+# or
+yarn dev
+# or
+pnpm dev
+# or
+bun dev
 ```
 
-Open `http://localhost:3000` in your browser.
+Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
 
-## Available Scripts
+You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
 
-- `npm run dev` - start the development server
-- `npm run build` - build the production app
-- `npm run start` - start the production server
-- `npm run lint` - run ESLint
+This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
 
-## Project Structure
+## Learn More
 
-- `app/page.tsx` - landing page
-- `app/layout.tsx` - root layout and metadata
-- `app/(app)/layout.tsx` - shared app shell with navbar and sidebar
-- `app/(app)/dashboard/page.tsx` - dashboard page
-- `app/(app)/execution/page.tsx` - execution visualizer
-- `app/(app)/playground/page.tsx` - playground page
-- `app/docs/layout.tsx` - docs shell and navigation
-- `app/docs/[slug]/page.tsx` - docs content renderer
-- `components/` - shared UI components
-- `lib/docs-content.ts` - docs content source of truth
-- `lib/utils.ts` - shared utility helpers
+To learn more about Next.js, take a look at the following resources:
 
-## Notes
+- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
+- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
 
-- The site is currently frontend-only and uses static/mock data for the dashboard, execution view, and playground UI.
-- If you add or rename docs content, update `lib/docs-content.ts` first because it powers both navigation and page rendering.
-- The visual design uses a dark theme, subtle textures, animated accents, and custom component styling across the app.
+You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+
+## Deploy on Vercel
+
+The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+
+Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
