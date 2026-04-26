@@ -190,7 +190,23 @@ def build_parser() -> argparse.ArgumentParser:
     tui_cmd = sub.add_parser("tui", help="Launch interactive TUI for MTP + Codex bridge.")
     tui_cmd.add_argument(
         "--backend",
-        choices=["codex", "mtp-openai"],
+        choices=[
+            "codex",
+            "openai",
+            "groq",
+            "claude",
+            "gemini",
+            "openrouter",
+            "mistral",
+            "cohere",
+            "sambanova",
+            "cerebras",
+            "deepseek",
+            "togetherai",
+            "fireworksai",
+            "ollama",
+            "lmstudio",
+        ],
         default="codex",
         help="Chat backend to use.",
     )
@@ -199,8 +215,8 @@ def build_parser() -> argparse.ArgumentParser:
         default="gpt-5.3-codex",
         help="Model for Codex backend.",
     )
-    tui_cmd.add_argument("--openai-model", default="gpt-5.4-mini", help="Model for mtp-openai backend.")
-    tui_cmd.add_argument("--max-rounds", type=int, default=6, help="max_rounds for mtp-openai backend.")
+    tui_cmd.add_argument("--openai-model", default="gpt-5.4-mini", help="Initial model for the OpenAI MTP backend.")
+    tui_cmd.add_argument("--max-rounds", type=int, default=6, help="max_rounds for MTP SDK provider backends.")
     tui_cmd.add_argument("--cwd", default=".", help="Working directory used by tools and Codex backend.")
     tui_cmd.add_argument(
         "--session-db",
@@ -218,11 +234,17 @@ def build_parser() -> argparse.ArgumentParser:
         default="medium",
         help="Reasoning effort preference used by codex backend.",
     )
-    tui_cmd.add_argument("--autoresearch", action="store_true", help="Enable autoresearch for mtp-openai backend.")
+    tui_cmd.add_argument(
+        "--mode",
+        choices=["plan", "code", "debug", "review"],
+        default="code",
+        help="MTP harness mode for SDK providers.",
+    )
+    tui_cmd.add_argument("--autoresearch", action="store_true", help="Enable autoresearch for MTP SDK provider backends.")
     tui_cmd.add_argument(
         "--research-instructions",
         default=None,
-        help="Custom research instructions for mtp-openai backend when autoresearch is enabled.",
+        help="Custom research instructions for MTP SDK provider backends when autoresearch is enabled.",
     )
     tui_cmd.set_defaults(handler=_cmd_tui)
 
