@@ -15,9 +15,10 @@ from uuid import uuid4
 
 from mtp import Agent, JsonSessionStore, SessionRecord
 from mtp.providers import OpenAI
-from mtp.toolkits.local import register_local_toolkits
 from . import tui_codex_backend as codex_backend
 from . import tui_mtp_backend as mtp_backend
+from .tui_harness_agent import build_harness_agent
+from .tui_harness_policy import HARNESS_MODES, normalize_harness_mode
 from .tui_provider_factory import ProviderSelection, build_tui_provider, SUPPORTED_TUI_PROVIDERS
 from .tui_settings import (
     provider_settings_path,
@@ -319,6 +320,7 @@ class TUIState:
     autoresearch: bool
     research_instructions: str | None
     reasoning_effort: str
+    harness_mode: str
     codex_sandbox_mode: str  # "read-only", "workspace-write", or "danger-full-access"
     last_usage_lines: list[str]
     transcript: list[TranscriptTurn]
@@ -393,6 +395,7 @@ def _print_help() -> None:
             ("/model <name>", "Switch to model"),
             ("/model add <provider> <name>", "Add custom model to any provider"),
             ("/reasoning <none|low|...|xhigh>", "Set reasoning effort (codex only)"),
+            ("/mode <plan|code|debug|review>", "Set MTP harness mode (SDK providers)"),
             ("/rounds <n>", "Set max_rounds (MTP providers)"),
             ("/sandbox [mode]", "Set Codex sandbox mode (Ctrl+W) - controls file access permissions"),
         ]),
@@ -626,6 +629,7 @@ def _save_tui_session(state: TUIState) -> None:
         "openai_model": state.openai_model,
         "codex_session_id": state.codex_session_id,
         "reasoning_effort": state.reasoning_effort,
+        "harness_mode": state.harness_mode,
         "codex_sandbox_mode": state.codex_sandbox_mode,
         "max_rounds": state.max_rounds,
         "autoresearch": state.autoresearch,
@@ -669,6 +673,7 @@ def _reset_chat(
         state.autoresearch = False
         state.research_instructions = None
         state.reasoning_effort = "medium"
+        state.harness_mode = "code"
     _save_tui_session(state)
 
 
@@ -725,6 +730,12 @@ def _load_session_into_state(state: TUIState, record: SessionRecord) -> None:
     reasoning = tui_meta.get("reasoning_effort")
     if isinstance(reasoning, str) and _resolve_reasoning(reasoning) is not None:
         state.reasoning_effort = reasoning
+    harness_mode = tui_meta.get("harness_mode")
+    if isinstance(harness_mode, str):
+        try:
+            state.harness_mode = normalize_harness_mode(harness_mode)
+        except ValueError:
+            state.harness_mode = "code"
     # Restore codex_sandbox_mode (default to workspace-write if not present for backward compatibility)
     codex_sandbox_mode = tui_meta.get("codex_sandbox_mode")
     if isinstance(codex_sandbox_mode, str) and codex_sandbox_mode in ("read-only", "workspace-write", "danger-full-access"):
@@ -1298,18 +1309,13 @@ def _ensure_openai_agent(state: TUIState) -> Agent.MTPAgent:
     if state.agent is not None:
         return state.agent
     Agent.load_dotenv_if_available()
-    tools = Agent.ToolRegistry()
-    register_local_toolkits(tools, base_dir=state.cwd)
     provider = OpenAI(model=state.openai_model)
-    state.agent = Agent.MTPAgent(
+    state.agent = build_harness_agent(
         provider=provider,
-        tools=tools,
-        strict_dependency_mode=True,
+        cwd=state.cwd,
+        mode=state.harness_mode,
         autoresearch=state.autoresearch,
         research_instructions=state.research_instructions,
-        stream_tool_events=True,
-        stream_tool_results=False,
-        session_store=state.session_store,
     )
     return state.agent
 
@@ -2099,6 +2105,7 @@ def _print_status(state: TUIState) -> None:
         ("session_label", state.session_label or "(none)", C_DIM),
         ("turns", str(len(state.transcript)), C_VALUE),
         ("backend", state.backend, C_SUCCESS),
+        ("harness_mode", state.harness_mode, C_VALUE),
         ("codex_sandbox_mode", sandbox_mode_display, ""),  # Color already in display
         ("cwd", str(state.cwd), C_TEXT),
         ("codex_session", state.codex_session_id or "(none)", C_DIM),
@@ -2447,15 +2454,10 @@ def _switch_backend(state: TUIState, provider_name: str) -> str:
     
     # Build MTP agent
     try:
-        # Always create a fresh tool registry to avoid stale autoresearch tools
-        tools = Agent.ToolRegistry()
-        register_local_toolkits(tools, base_dir=str(state.cwd))
-        
-        agent = mtp_backend.build_mtp_agent(
+        agent = build_harness_agent(
             provider=provider,
-            tools=tools,
             cwd=state.cwd,
-            max_rounds=state.max_rounds,
+            mode=state.harness_mode,
             autoresearch=state.autoresearch,
             research_instructions=state.research_instructions,
             debug_mode=False,  # Can be made configurable
@@ -2467,7 +2469,7 @@ def _switch_backend(state: TUIState, provider_name: str) -> str:
         
         return (
             f"{C_SUCCESS}✓{RESET} Switched to {C_VALUE}{provider_name}{RESET} "
-            f"with model {C_MODEL}{model}{RESET}."
+            f"with model {C_MODEL}{model}{RESET} in {C_VALUE}{state.harness_mode}{RESET} mode."
         )
     
     except Exception as e:
@@ -2786,6 +2788,19 @@ def _handle_command(state: TUIState, raw: str) -> str | None:
             f"{C_SUCCESS}{_SYM_OK}{RESET} reasoning_effort set to {C_VALUE}{resolved_reasoning}{RESET}. "
             f"{C_DIM}Forwarded to codex backend.{RESET}"
         )
+    if cmd == "/mode":
+        if not arg:
+            return (
+                f"{C_LABEL}MTP harness mode:{RESET} {C_VALUE}{state.harness_mode}{RESET}\n"
+                f"  {C_DIM}Available: {', '.join(HARNESS_MODES)}{RESET}"
+            )
+        try:
+            state.harness_mode = normalize_harness_mode(arg)
+        except ValueError:
+            return f"{C_WARNING}Usage:{RESET} {C_CMD}/mode <plan|code|debug|review>{RESET}"
+        state.agent = None
+        _save_tui_session(state)
+        return f"{C_SUCCESS}{_SYM_OK}{RESET} MTP harness mode set to {C_VALUE}{state.harness_mode}{RESET}. Agent reloaded."
     if cmd == "/rounds":
         if not arg.isdigit():
             return f"{C_WARNING}Usage:{RESET} {C_CMD}/rounds <positive-int>{RESET}"
@@ -3404,6 +3419,7 @@ def run_tui(args) -> int:
         autoresearch=bool(args.autoresearch),
         research_instructions=args.research_instructions,
         reasoning_effort=str(getattr(args, "reasoning_effort", "medium")),
+        harness_mode=normalize_harness_mode(getattr(args, "mode", "code")),
         codex_sandbox_mode="workspace-write",  # Default to workspace-write mode for convenience
         last_usage_lines=[],
         transcript=[],
@@ -3557,7 +3573,7 @@ def run_tui(args) -> int:
             )
         else:
             # MTP providers don't show reasoning
-            status_line = f"  {C_DIM}> {state.backend} {_SYM_DOT} {active_model}{RESET}"
+            status_line = f"  {C_DIM}> {state.backend} {_SYM_DOT} {active_model} {_SYM_DOT} mode={state.harness_mode}{RESET}"
 
         print(status_line)
         spinner_preset = "reasoning" if state.reasoning_effort in ("high", "xhigh") else "default"
