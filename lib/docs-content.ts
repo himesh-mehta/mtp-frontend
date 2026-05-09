@@ -11,7 +11,7 @@ export interface DocItem {
 }
 
 export interface DocContentBlock {
-  type: "text" | "code" | "heading" | "list" | "callout" | "table";
+  type: "text" | "code" | "heading" | "list" | "callout" | "table" | "custom-providers-grid";
   value: string;
   language?: string;
   calloutType?: "note" | "tip" | "warning";
@@ -329,20 +329,7 @@ raise StopAgentRun("Manual review required.")` },
   providers: [
     { type: "text", value: "MTP provides a standardized ProviderAdapter interface. Each adapter translates model-specific API responses into MTP's AgentAction format. This means you can swap models without changing your agent code." },
     { type: "heading", value: "Supported Providers" },
-    { type: "table", value: "", headers: ["Provider", "Alias", "SDK Extra"], rows: [
-      ["Groq", "Groq", "mtpx[groq]"],
-      ["OpenAI", "OpenAI", "mtpx[openai]"],
-      ["Anthropic", "Anthropic", "mtpx[anthropic]"],
-      ["Google Gemini", "Gemini", "mtpx[gemini]"],
-      ["OpenRouter", "OpenRouter", "mtpx[openrouter]"],
-      ["Cohere", "Cohere", "mtpx[cohere]"],
-      ["Mistral", "Mistral", "mtpx[mistral]"],
-      ["DeepSeek", "DeepSeek", "mtpx[deepseek]"],
-      ["SambaNova", "SambaNova", "mtpx[sambanova]"],
-      ["Cerebras", "Cerebras", "mtpx[cerebras]"],
-      ["Together AI", "TogetherAI", "mtpx[togetherai]"],
-      ["Fireworks AI", "FireworksAI", "mtpx[fireworksai]"],
-    ]},
+    { type: "custom-providers-grid", value: "" },
     { type: "heading", value: "Usage" },
     { type: "code", language: "python", value: `from mtp.providers import Groq
 
