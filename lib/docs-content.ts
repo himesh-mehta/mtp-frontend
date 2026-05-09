@@ -16,7 +16,7 @@ export interface DocContentBlock {
     | "text" | "code" | "heading" | "subheading" | "list" | "callout"
     | "table" | "custom-providers-grid" | "tabs" | "architecture"
     | "api-method" | "divider";
-  value: string;
+  value?: string;
   language?: string;
   calloutType?: "note" | "tip" | "warning" | "danger";
   items?: string[];
