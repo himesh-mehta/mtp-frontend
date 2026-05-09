@@ -2,70 +2,12 @@
 
 import { useEffect, useRef } from "react";
 
-class Particle {
-  x: number;
-  y: number;
-  vx: number;
-  vy: number;
+interface Blob {
+  x: number; y: number;
+  vx: number; vy: number;
   radius: number;
   color: string;
-  baseX: number;
-  baseY: number;
-
-  constructor(x: number, y: number) {
-    this.x = x;
-    this.y = y;
-    this.baseX = x;
-    this.baseY = y;
-    this.vx = (Math.random() - 0.5) * 1;
-    this.vy = (Math.random() - 0.5) * 1;
-    this.radius = Math.random() * 2 + 1;
-
-    const colors = ["#facc15", "#699cff", "#b95463"]; // Yellow, Blue, Purple/Red mix
-    this.color = colors[Math.floor(Math.random() * colors.length)];
-  }
-
-  update(mouseX: number, mouseY: number, width: number, height: number) {
-    // Wander around naturally
-    this.baseX += this.vx;
-    this.baseY += this.vy;
-
-    // Bounce off edges smoothly
-    if (this.baseX <= 0 || this.baseX >= width) this.vx *= -1;
-    if (this.baseY <= 0 || this.baseY >= height) this.vy *= -1;
-
-    // Lerp towards mouse loosely
-    let targetX = this.baseX;
-    let targetY = this.baseY;
-
-    if (mouseX !== -1 && mouseY !== -1) {
-      const dx = mouseX - this.baseX;
-      const dy = mouseY - this.baseY;
-      const dist = Math.sqrt(dx * dx + dy * dy);
-
-      if (dist < 400) {
-        // Move slightly towards cursor
-        targetX += dx * 0.05 * (400 - dist) / 400;
-        targetY += dy * 0.05 * (400 - dist) / 400;
-      }
-    }
-
-    // Smooth integration
-    this.x += (targetX - this.x) * 0.05;
-    this.y += (targetY - this.y) * 0.05;
-  }
-
-  draw(ctx: CanvasRenderingContext2D) {
-    ctx.beginPath();
-    ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
-    ctx.fillStyle = this.color;
-    ctx.globalAlpha = 0.4;
-    ctx.shadowBlur = 15;
-    ctx.shadowColor = this.color;
-    ctx.fill();
-    ctx.globalAlpha = 1.0;
-    ctx.shadowBlur = 0;
-  }
+  alpha: number;
 }
 
 export function BubbleBackground() {
@@ -74,74 +16,122 @@ export function BubbleBackground() {
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    let animationFrameId: number;
-    let particles: Particle[] = [];
-    let mouseX = -1;
-    let mouseY = -1;
+    let raf: number;
+    let blobs: Blob[] = [];
+    let mouseX = -1, mouseY = -1;
+
+    // Accent colors from design system
+    const colors = [
+      "#facc15", // yellow accent
+      "#4f8ef7", // blue
+      "#8b5cf6", // purple
+      "#22d3ee", // cyan
+    ];
 
     const resize = () => {
       canvas.width = window.innerWidth;
       canvas.height = window.innerHeight;
-      initParticles();
+      init();
     };
 
-    const initParticles = () => {
-      particles = [];
-      const numParticles = Math.min(Math.floor((window.innerWidth * window.innerHeight) / 15000), 100);
-      for (let i = 0; i < numParticles; i++) {
-        particles.push(
-          new Particle(
-            Math.random() * canvas.width,
-            Math.random() * canvas.height
-          )
-        );
+    const init = () => {
+      blobs = [];
+      const count = Math.min(Math.floor((window.innerWidth * window.innerHeight) / 20000), 80);
+      for (let i = 0; i < count; i++) {
+        blobs.push({
+          x: Math.random() * canvas.width,
+          y: Math.random() * canvas.height,
+          vx: (Math.random() - 0.5) * 0.6,
+          vy: (Math.random() - 0.5) * 0.6,
+          radius: Math.random() * 1.8 + 0.8,
+          color: colors[Math.floor(Math.random() * colors.length)],
+          alpha: Math.random() * 0.35 + 0.1,
+        });
       }
     };
 
     const animate = () => {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-      particles.forEach((p) => {
-        p.update(mouseX, mouseY, canvas.width, canvas.height);
-        p.draw(ctx);
-      });
+      for (const b of blobs) {
+        // drift
+        b.x += b.vx;
+        b.y += b.vy;
 
-      animationFrameId = requestAnimationFrame(animate);
+        // bounce
+        if (b.x < 0 || b.x > canvas.width) b.vx *= -1;
+        if (b.y < 0 || b.y > canvas.height) b.vy *= -1;
+
+        // attract toward mouse gently
+        if (mouseX !== -1) {
+          const dx = mouseX - b.x;
+          const dy = mouseY - b.y;
+          const dist = Math.sqrt(dx * dx + dy * dy);
+          if (dist < 300) {
+            const force = (300 - dist) / 300 * 0.03;
+            b.x += dx * force;
+            b.y += dy * force;
+          }
+        }
+
+        ctx.beginPath();
+        ctx.arc(b.x, b.y, b.radius, 0, Math.PI * 2);
+        ctx.fillStyle = b.color;
+        ctx.globalAlpha = b.alpha;
+        ctx.shadowBlur = 12;
+        ctx.shadowColor = b.color;
+        ctx.fill();
+        ctx.globalAlpha = 1;
+        ctx.shadowBlur = 0;
+      }
+
+      // Draw subtle connecting lines between nearby particles
+      for (let i = 0; i < blobs.length; i++) {
+        for (let j = i + 1; j < blobs.length; j++) {
+          const dx = blobs[i].x - blobs[j].x;
+          const dy = blobs[i].y - blobs[j].y;
+          const dist = Math.sqrt(dx * dx + dy * dy);
+          if (dist < 120) {
+            const alpha = (1 - dist / 120) * 0.06;
+            ctx.beginPath();
+            ctx.moveTo(blobs[i].x, blobs[i].y);
+            ctx.lineTo(blobs[j].x, blobs[j].y);
+            ctx.strokeStyle = `rgba(250, 204, 21, ${alpha})`;
+            ctx.lineWidth = 0.5;
+            ctx.stroke();
+          }
+        }
+      }
+
+      raf = requestAnimationFrame(animate);
     };
 
-    const handleMouseMove = (e: MouseEvent) => {
-      mouseX = e.clientX;
-      mouseY = e.clientY;
-    };
-
-    const handleMouseLeave = () => {
-      mouseX = -1;
-      mouseY = -1;
-    };
+    const onMouseMove = (e: MouseEvent) => { mouseX = e.clientX; mouseY = e.clientY; };
+    const onMouseLeave = () => { mouseX = -1; mouseY = -1; };
 
     window.addEventListener("resize", resize);
-    window.addEventListener("mousemove", handleMouseMove);
-    window.addEventListener("mouseleave", handleMouseLeave);
+    window.addEventListener("mousemove", onMouseMove);
+    window.addEventListener("mouseleave", onMouseLeave);
 
     resize();
     animate();
 
     return () => {
       window.removeEventListener("resize", resize);
-      window.removeEventListener("mousemove", handleMouseMove);
-      window.removeEventListener("mouseleave", handleMouseLeave);
-      cancelAnimationFrame(animationFrameId);
+      window.removeEventListener("mousemove", onMouseMove);
+      window.removeEventListener("mouseleave", onMouseLeave);
+      cancelAnimationFrame(raf);
     };
   }, []);
 
   return (
     <canvas
       ref={canvasRef}
-      className="fixed inset-0 pointer-events-none w-full h-full z-0 opacity-80"
+      className="fixed inset-0 pointer-events-none w-full h-full z-0"
+      style={{ opacity: 0.7 }}
     />
   );
 }
