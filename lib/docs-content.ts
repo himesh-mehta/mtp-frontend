@@ -1830,75 +1830,483 @@ def write_file(path: str, content: str):
   // ─── PROVIDERS ──────────────────────────────────────────────
 
   providers: [
+    { type: "text", value: "The Provider Layer is the normalization bridge that allows MTPX to support any Large Language Model with a single, unified protocol." },
     { type: "custom-providers-grid", value: "" }
   ],
 
   "provider-openai": [
-    { type: "code", language: "python", value: "from mtp.providers import OpenAI\nprovider = OpenAI(model=\"gpt-4o\")" }
+    { type: "text", value: "OpenAI is the primary reference implementation for MTPX, offering robust support for complex DAG planning and tool calls." },
+    { type: "heading", value: "Overview" },
+    { type: "text", value: "The OpenAI adapter supports GPT-4o, GPT-4-turbo, and the o1-preview series. It leverages OpenAI's structured tool-calling API to ensure that model outputs strictly adhere to the MTPX ExecutionPlan schema." },
+    { type: "code", language: "python", value: `from mtp.providers import OpenAI
+
+# Standard GPT-4o configuration
+provider = OpenAI(
+    model="gpt-4o",
+    temperature=0.0,
+    api_key="sk-..."
+)
+
+agent = Agent.MTPAgent(provider=provider, tools=my_tools)` },
+    { type: "heading", value: "Performance" },
+    { type: "text", value: "OpenAI models are highly reliable for generating multi-step DAGs. In testing, GPT-4o achieves a >98% success rate in producing valid JSON plans for graphs with up to 10 nodes." }
   ],
 
   "provider-anthropic": [
-    { type: "code", language: "python", value: "from mtp.providers import Anthropic\nprovider = Anthropic(model=\"claude-3-5-sonnet-latest\")" }
+    { type: "text", value: "Anthropic's Claude series offers exceptional reasoning capabilities and large context windows for complex tool orchestration." },
+    { type: "heading", value: "Overview" },
+    { type: "text", value: "The Anthropic adapter supports Claude 3.5 Sonnet and Claude 3 Opus. It utilizes the `tool_use` API and is particularly well-suited for 'Stateful Sessions' where long-term history persistence is critical." },
+    { type: "code", language: "python", value: `from mtp.providers import Anthropic
+
+provider = Anthropic(
+    model="claude-3-5-sonnet-latest",
+    api_key="ant-..."
+)
+
+agent = Agent.MTPAgent(provider=provider, tools=my_tools)` },
+    { type: "heading", value: "Strengths" },
+    { type: "text", value: "Claude's superior instruction-following makes it ideal for 'Human Approval' workflows, as it can provide more nuanced reasoning for why a specific high-risk action was suggested." }
   ],
 
   "provider-gemini": [
-    { type: "code", language: "python", value: "from mtp.providers import Gemini\nprovider = Gemini(model=\"gemini-1.5-pro\")" }
+    { type: "text", value: "Google Gemini provides ultra-large context windows and integrated multimodal support for MTPX agents." },
+    { type: "heading", value: "Overview" },
+    { type: "text", value: "Supporting Gemini 1.5 Pro and Flash, this provider is the preferred choice for tasks involving large file processing or complex cross-document reasoning." },
+    { type: "code", language: "python", value: `from mtp.providers import Gemini
+
+provider = Gemini(
+    model="gemini-1.5-pro",
+    api_key="AIza..."
+)
+
+agent = Agent.MTPAgent(provider=provider, tools=my_tools)` }
   ],
 
   "provider-groq": [
-    { type: "code", language: "python", value: "from mtp.providers import Groq\nprovider = Groq(model=\"llama-3.3-70b-versatile\")" }
+    { type: "text", value: "Groq offers the world's fastest inference for MTPX, enabling near-instantaneous plan generation." },
+    { type: "heading", value: "Overview" },
+    { type: "text", value: "Leveraging LPU (Language Processing Unit) technology, the Groq provider is ideal for low-latency applications where agent response time is critical." },
+    { type: "code", language: "python", value: `from mtp.providers import Groq
+
+provider = Groq(
+    model="llama-3.3-70b-versatile",
+    api_key="gsk_..."
+)
+
+agent = Agent.MTPAgent(provider=provider, tools=my_tools)` }
   ],
 
   "provider-ollama": [
-    { type: "code", language: "python", value: "from mtp.providers import Ollama\nprovider = Ollama(model=\"llama3\")" }
+    { type: "text", value: "Ollama enables 100% local, private, and air-gapped agent execution using open-source models." },
+    { type: "heading", value: "Overview" },
+    { type: "text", value: "The Ollama provider bridges local model servers to the MTPX runtime. This is the recommended choice for privacy-sensitive environments or local development." },
+    { type: "code", language: "python", value: `from mtp.providers import Ollama
+
+provider = Ollama(
+    model="llama3",
+    base_url="http://localhost:11434"
+)
+
+agent = Agent.MTPAgent(provider=provider, tools=my_tools)` }
   ],
 
   "provider-custom": [
-    { type: "text", value: "Implement the ProviderAdapter base class to add support for custom models." }
+    { type: "text", value: "The `BaseProvider` interface allow you to integrate any internal or proprietary LLM into the MTPX ecosystem." },
+    { type: "heading", value: "Implementation" },
+    { type: "text", value: "To add a custom provider, implement the `generate_plan` method. Your class must convert your model's raw output into a valid `ExecutionPlan` object." },
+    { type: "code", language: "python", value: `from mtp.providers import BaseProvider
+
+class MyPrivateModel(BaseProvider):
+    def generate_plan(self, prompt, tools, history):
+        # Your custom API logic here
+        raw_response = call_internal_llm(prompt, tools)
+        return self.parse_mtp_plan(raw_response)` }
   ],
 
   // ─── SAFETY ─────────────────────────────────────────────────
 
   "safety-risk-levels": [
-    { type: "table", headers: ["Level", "Action"], rows: [["READ", "Allow"], ["WRITE", "Ask"], ["DESTRUCTIVE", "Deny"]] }
+    { type: "text", value: "Risk Levels are the foundational security classification system in MTPX, used to categorize tool capabilities by their potential impact on the system." },
+
+    { type: "heading", value: "Overview" },
+    { type: "text", value: "Not all tool calls are equal. Reading a file is fundamentally safer than deleting a database. MTPX formalizes this through `RiskLevel`, a mandatory metadata field for every tool. By classifying tools into discrete levels, the Policy Engine can apply automated enforcement rules (Allow, Ask, or Deny) without needing to inspect the tool's internal logic." },
+
+    { type: "heading", value: "Why It Exists" },
+    { type: "text", value: "Risk classification is the first line of defense in the MTP security model. It exists to:" },
+    { type: "list", value: "", items: [
+      "Prevent Accidental Destruction — Ensure that high-risk tools (e.g., `drop_table`) are never executed without explicit human authorization.",
+      "Automate Compliance — Enforce corporate security policies (e.g., 'no agent shall have WRITE access to the production filesystem') at the framework level.",
+      "Inform the Planner — Provide the model with context about the sensitivity of its actions, improving reasoning and decision-making."
+    ]},
+
+    { type: "heading", value: "How It Works" },
+    { type: "text", value: "MTPX defines three standard risk levels:" },
+    { type: "list", value: "", items: [
+      "1. READ — Non-mutating operations. Examples: `search_web`, `read_file`, `get_weather`. Default: ALWAYS ALLOWED.",
+      "2. WRITE — Mutating but recoverable operations. Examples: `write_file`, `send_email`, `post_tweet`. Default: REQUIRES APPROVAL (ASK).",
+      "3. DESTRUCTIVE — Non-recoverable or high-impact operations. Examples: `delete_file`, `drop_database`, `terminate_instance`. Default: ALWAYS DENIED."
+    ]},
+
+    { type: "heading", value: "Architecture Flow" },
+    { type: "architecture", value: `[ Tool Registry ] ◀── [ @mtp_tool(risk_level=...) ]
+           │
+           ▼
+ [ Execution Plan ] ──▶ [ Policy Engine ]
+           │                 │
+           │                 ├─▶ READ        ──▶ ( ALLOW )
+           │                 ├─▶ WRITE       ──▶ ( ASK   )
+           ▼                 └─▶ DESTRUCTIVE ──▶ ( DENY  )
+ [ Runtime Engine ]` },
+
+    { type: "heading", value: "Code Examples" },
+    { type: "text", value: "Assigning risk levels is done during tool definition using the `@mtp_tool` decorator." },
+    { type: "code", language: "python", value: `from mtp import mtp_tool, RiskLevel
+
+@mtp_tool(risk_level=RiskLevel.DESTRUCTIVE)
+def delete_user_account(user_id: str):
+    """Deletes a user account permanently. HIGH RISK."""
+    db.users.delete_one({"id": user_id})
+
+# The runtime will automatically block this unless a specific policy override is provided.` },
+
+    { type: "heading", value: "Runtime Behavior" },
+    { type: "text", value: "Risk levels are immutable once a tool is registered. During the `Authorize` stage of the lifecycle, the Policy Engine inspects the risk level of every action in the DAG. If any action matches a level configured for `DENY`, the entire plan is rejected before a single tool is invoked. If an action matches `ASK`, the runtime pauses and waits for a signal from the `ApprovalHandler`." },
+
+    { type: "heading", value: "Best Practices" },
+    { type: "list", value: "", items: [
+      "Conservative Defaults — When in doubt, assign a higher risk level (e.g., classify an unknown API call as WRITE rather than READ).",
+      "Descriptive Names — Include the risk level in the tool's documentation string to help the Planner understand the gravity of the action.",
+      "Policy Overrides — Use custom `RiskPolicies` to downgrade risk levels only in safe environments (e.g., a dev sandbox)."
+    ]},
+
+    { type: "heading", value: "Common Mistakes" },
+    { type: "list", value: "", items: [
+      "Misclassification — Labeling a tool that modifies state (like `update_balance`) as READ to bypass approval gates.",
+      "Ignoring the Policy Engine — Assuming that setting a risk level is enough without actually attaching a `PolicyEngine` to the runtime.",
+      "Shadow Logic — Performing destructive actions inside a tool labeled as READ (e.g., a 'get' request that actually deletes data)."
+    ]},
+
+    { type: "heading", value: "Related Concepts" },
+    { type: "table", headers: ["Level", "Action", "Description"], rows: [
+      ["READ", "ALLOW", "Safe, idempotent data retrieval."],
+      ["WRITE", "ASK", "State-changing but reversible or low-impact."],
+      ["DESTRUCTIVE", "DENY", "Irreversible, high-cost, or critical security risk."]
+    ]}
   ],
 
   "safety-approval": [
-    { type: "text", value: "Configuring approval_handler for Human-in-the-Loop workflows." }
+    { type: "text", value: "Approval Gates provide Human-in-the-Loop (HITL) control, allowing engineers to review and authorize high-risk agent actions in real time." },
+
+    { type: "heading", value: "Overview" },
+    { type: "text", value: "MTPX is built on the principle that 'Autonomous' does not mean 'Unsupervised'. Approval Gates are the mechanism for enforcing manual sign-off on sensitive operations. When a tool call triggers an approval gate, the Runtime serializes its state and waits for an external signal before proceeding." },
+
+    { type: "heading", value: "Why It Exists" },
+    { type: "text", value: "In production environments, full autonomy is often unacceptable for actions with financial, legal, or infrastructure consequences. Approval Gates provide:" },
+    { type: "list", value: "", items: [
+      "Deterministic Oversight — Explicitly define which actions require human review.",
+      "Risk Mitigation — Prevent hallucinated tool calls with incorrect arguments from reaching production systems.",
+      "Stateful Pausing — The agent maintains its context while waiting, allowing for multi-hour or multi-day approval workflows."
+    ]},
+
+    { type: "heading", value: "How It Works" },
+    { type: "text", value: "The approval flow is a three-way interaction between the Runtime, the Policy Engine, and the Approval Handler:" },
+    { type: "list", value: "", items: [
+      "1. Trigger — The Policy Engine identifies an action (e.g., `RiskLevel.WRITE`) that requires approval.",
+      "2. Interruption — The Runtime suspends execution and emits an `APPROVAL_REQUIRED` event.",
+      "3. Signal — An external entity (User, CLI, or Webhook) sends a `RESOLVE_APPROVAL` message with a status of `APPROVED` or `REJECTED`."
+    ]},
+
+    { type: "heading", value: "Architecture Flow" },
+    { type: "architecture", value: `[ Runtime ] ──▶ [ Policy Engine ]
+                   │
+           ( ACTION.ASK )
+                   │
+           [ Suspend State ] ──▶ [ Emit: APPROVAL_REQ ]
+                   │                     │
+           [ Wait for Signal ] ◀── [ User: APPROVE ]
+                   │
+           [ Resume Wave ]` },
+
+    { type: "heading", value: "Code Examples" },
+    { type: "text", value: "You can implement a custom `ApprovalHandler` to bridge the runtime to a UI or messaging platform like Slack." },
+    { type: "code", language: "python", value: `from mtp.safety import CLIApprovalHandler
+
+# A built-in handler that prompts the user in the terminal
+handler = CLIApprovalHandler()
+
+# Attach to the agent
+agent = Agent.MTPAgent(
+    ...,
+    approval_handler=handler
+)
+
+# If the agent attempts a WRITE action, it will now pause and wait for you to type 'yes'.` },
+
+    { type: "heading", value: "Runtime Behavior" },
+    { type: "text", value: "While waiting for approval, the MTPX session is 'Frozen'. The message history and tool outputs are preserved in the `SessionStore`. If the agent process restarts, the session can be re-hydrated, and the runtime will check if the pending approval has been resolved. If an approval is `REJECTED`, the entire execution wave is cancelled, and the rejection is fed back to the Planner as a 'Permission Denied' result." },
+
+    { type: "heading", value: "Best Practices" },
+    { type: "list", value: "", items: [
+      "Descriptive Prompts — Use the `ApprovalRequest` payload to show the user exactly what the tool is about to do (e.g., 'Delete folder /var/www?').",
+      "Timeout Logic — Set an expiry on approval requests to prevent sessions from hanging indefinitely.",
+      "Contextual Approval — Provide the user with the 3 most recent messages in the approval UI to help them understand the model's reasoning."
+    ]},
+
+    { type: "heading", value: "Common Mistakes" },
+    { type: "list", value: "", items: [
+      "Silent Rejections — Rejecting an action without providing a reason, which can cause the Planner to repeatedly retry the same failing plan.",
+      "Synchronous Blocking — Implementing an `ApprovalHandler` that blocks the main thread of the server.",
+      "Universal Approval — Disabling gates in production 'just for convenience', bypassing the security model."
+    ]},
+
+    { type: "heading", value: "Related Concepts" },
+    { type: "table", headers: ["Component", "Role"], rows: [
+      ["RiskLevel.WRITE", "The default trigger for approval gates."],
+      ["Action.ASK", "The policy resolution that initiates the gate."],
+      ["Session Persistence", "Required for long-running approval waits."]
+    ]}
   ],
 
   "safety-sandboxing": [
-    { type: "text", value: "Best practices for isolating agents from sensitive host resources." }
+    { type: "text", value: "Sandboxing ensures that tools are executed in isolated environments, preventing them from accessing sensitive host resources or leaking data between sessions." },
+
+    { type: "heading", value: "Overview" },
+    { type: "text", value: "The core philosophy of MTPX is that 'Model Generated Code is Malicious'. Tool sandboxing provides a hard boundary around every tool execution. Whether it's a simple Python function or a complex CLI tool, MTPX wraps it in a containerized or process-jailed environment where access to the network, CPU, and filesystem is strictly metered." },
+
+    { type: "heading", value: "Why It Exists" },
+    { type: "text", value: "Sandboxing is the ultimate defense against prompt injection and model hallucinations. It provides:" },
+    { type: "list", value: "", items: [
+      "Resource Control — Prevent an agent from accidentally running a fork-bomb or allocating all system RAM.",
+      "Data Sovereignty — Ensure that Tool A (reading private files) cannot leak that data into Tool B (web search) via temporary files.",
+      "Infrastructure Protection — Block SSRF attacks where the model tries to probe your internal VPC through a tool call."
+    ]},
+
+    { type: "heading", value: "How It Works" },
+    { type: "text", value: "MTPX supports multiple isolation backends:" },
+    { type: "list", value: "", items: [
+      "1. DockerSandbox — Tools run in ephemeral OCI containers. Best for high-security and multi-tenant environments.",
+      "2. ProcessSandbox — Tools run in isolated OS processes with restricted namespaces (Linux cgroups/namespaces).",
+      "3. LocalSandbox — (Dev only) Tools run on the host machine with a dedicated working directory."
+    ]},
+
+    { type: "heading", value: "Architecture Flow" },
+    { type: "architecture", value: `[ Runtime Engine ]
+       │
+ [ Sandbox Factory ] ──▶ [ Resource Config ]
+       │
+ ┌─────┴──────────┬─────────────┐
+ ▼                ▼             ▼
+[ Container ]   [ Subprocess ]  [ Firecracker ]
+ (Hard Wall)     (Soft Wall)    (Micro-VM)` },
+
+    { type: "heading", value: "Code Examples" },
+    { type: "text", value: "Configuring a Docker-based sandbox ensures that tools are completely isolated from your host OS." },
+    { type: "code", language: "python", value: `from mtp.sandbox import DockerSandbox
+
+# Create a restricted sandbox environment
+sandbox = DockerSandbox(
+    image="python:3.11-alpine",
+    allow_network=False,
+    cpu_limit=0.5,      # 50% of one core
+    mem_limit="256mb"   # 256MB RAM
+)
+
+# Attach to your runtime
+runtime = MTPRuntime(..., sandbox=sandbox)` },
+
+    { type: "heading", value: "Runtime Behavior" },
+    { type: "text", value: "The sandbox is 'Just-in-Time' (JIT). Immediately before execution, the Runtime creates the sandbox environment, mounts the necessary tool arguments as JSON files, and executes the handler. Once the tool returns, the sandbox is destroyed. This 'Zero-Trust Lifecycle' ensures that no remnants of previous executions can influence future tool calls, effectively eliminating 'state leakage' attacks." },
+
+    { type: "heading", value: "Best Practices" },
+    { type: "list", value: "", items: [
+      "Network Blacklisting — Always disable network access unless the tool explicitly requires it (e.g., `send_email`).",
+      "Minimalist Images — Use 'slim' or 'alpine' base images for Docker sandboxes to reduce the attack surface.",
+      "Read-Only Filesystems — Mount the sandbox filesystem as read-only, except for a specific `/tmp` or `/output` directory."
+    ]},
+
+    { type: "heading", value: "Common Mistakes" },
+    { type: "list", value: "", items: [
+      "Shared Docker Sockets — Accidentally mounting `/var/run/docker.sock` into the sandbox, giving the agent full control over the host.",
+      "Missing Timeouts — Forgetting to set a hard `execution_timeout`, allowing a runaway tool to block a runtime worker indefinitely.",
+      "Large Images — Using multi-gigabyte Docker images which significantly increase agent latency during the sandbox setup phase."
+    ]},
+
+    { type: "heading", value: "Related Concepts" },
+    { type: "table", headers: ["Mechanism", "Primary Benefit"], rows: [
+      ["cgroups", "CPU and Memory resource limiting."],
+      ["Namespaces", "Filesystem and Network isolation."],
+      ["Ephemeral Storage", "Prevention of cross-session data leaks."]
+    ]}
   ],
 
   "safety-permissions": [
-    { type: "text", value: "Role-based access control (RBAC) for tool usage." }
+    { type: "text", value: "Tool Permissions provide Role-Based Access Control (RBAC) for agent actions, ensuring that specific users or sessions can only invoke authorized tools." },
+
+    { type: "heading", value: "Overview" },
+    { type: "text", value: "In multi-user environments, a 'Global Risk Policy' is not enough. A senior engineer might have permission to use the `deploy_service` tool, while a junior developer is restricted to `read_logs`. Tool Permissions allow you to attach 'Scopes' or 'Roles' to every tool call, which the Policy Engine validates against the current session's identity." },
+
+    { type: "heading", value: "Why It Exists" },
+    { type: "text", value: "Permissions provide 'Granular Authorization'. They exist to:" },
+    { type: "list", value: "", items: [
+      "Enforce RBAC — Map organizational roles directly to agent capabilities.",
+      "Limit Scope — Prevent an agent from accessing data in 'Project A' while fulfilling a request for 'Project B'.",
+      "Audit Trail — Record exactly *why* a specific tool was allowed (or denied) based on the current user's permissions."
+    ]},
+
+    { type: "heading", value: "How It Works" },
+    { type: "text", value: "The authorization flow adds a 'Permission Check' to the standard lifecycle:" },
+    { type: "list", value: "", items: [
+      "1. Identification — The Ingest stage captures the user's identity and assigned roles.",
+      "2. Tagging — Tools are assigned required scopes (e.g., `scope='aws:prod:write'`).",
+      "3. Validation — During the Authorize stage, the Policy Engine cross-references the tool's required scope with the user's active permissions."
+    ]},
+
+    { type: "heading", value: "Code Examples" },
+    { type: "text", value: "You can define required scopes directly in the tool decorator." },
+    { type: "code", language: "python", value: `@mtp_tool(risk_level=RiskLevel.DESTRUCTIVE, scope="cloud:admin")
+def shutdown_instance(instance_id: str):
+    """Restricted to users with the 'cloud:admin' scope."""
+    aws_client.terminate(instance_id)
+
+# Initialize agent with current user roles
+agent = Agent.MTPAgent(..., user_roles=["developer"])
+# Attempting to call shutdown_instance will now return a PERMISSION_DENIED error.` },
+
+    { type: "heading", value: "Runtime Behavior" },
+    { type: "text", value: "Permission checks are 'Fail-Closed'. If a tool requires a scope that the session doesn't explicitly possess, the runtime immediately returns a `PermissionDeniedError` and halts the plan. Unlike `RiskLevel` (which might trigger an approval gate), `Permission` failures are final and cannot be bypassed without updating the user's role." }
   ],
 
   "safety-audit": [
-    { type: "text", value: "Generating tamper-evident execution logs for compliance." }
+    { type: "text", value: "Audit Logs provide a tamper-evident, non-repudiable record of every reasoning step and system action taken by the MTPX agent." },
+
+    { type: "heading", value: "Overview" },
+    { type: "text", value: "In regulated industries, 'Agent Transparency' is a legal requirement. MTPX's Audit system goes beyond simple logging; it captures the 'Grounded Trace'—linking the user's prompt, to the model's generated plan, to the policy's resolution, and finally to the tool's raw result." },
+
+    { type: "heading", value: "Why It Exists" },
+    { type: "text", value: "Audit logs are the 'Black Box Recorder' of AI agents. They provide:" },
+    { type: "list", value: "", items: [
+      "Compliance — Meet GDPR, HIPAA, and SOC2 requirements for tracking data access and system modifications.",
+      "Forensics — If an agent performs an incorrect action, identify exactly where the failure occurred: was it the model's reasoning or the tool's implementation?",
+      "Model Evaluation — Build a dataset of 'reasoning-to-action' pairs to fine-tune future models."
+    ]},
+
+    { type: "heading", value: "How It Works" },
+    { type: "text", value: "The Audit system utilizes the Event Bus to capture a synchronous snapshot of the execution state at every lifecycle stage. These snapshots are then serialized and written to a secure, write-only `AuditStore`." }
   ],
 
   // ─── OBSERVABILITY ──────────────────────────────────────────
 
   "obs-streaming": [
-    { type: "text", value: "Using stream=True and stream_events=True for real-time feedback." }
+    { type: "text", value: "Event Streaming provides real-time, low-latency updates from the agent's internal reasoning and execution pipeline." },
+
+    { type: "heading", value: "Overview" },
+    { type: "text", value: "Stateless 'chat' interfaces are insufficient for agentic workflows that may take minutes to complete. Event Streaming allows the MTPX runtime to push state transitions (like 'Planning Started' or 'Tool Executing') to the client as they happen. This enables developers to build responsive UIs that show exactly what the agent is doing at any given second." },
+
+    { type: "heading", value: "Why It Exists" },
+    { type: "text", value: "Streaming is the key to 'User Trust' in autonomous systems. It exists to:" },
+    { type: "list", value: "", items: [
+      "Eliminate 'The Void' — Ensure the user never stares at a static loading spinner while the model is thinking or tools are running.",
+      "Enable Intervention — Allow users to see a risky plan being formed and cancel the execution before any tools are invoked.",
+      "Debugging & Profiling — Identify bottlenecks in the DAG execution waves in real time."
+    ]},
+
+    { type: "heading", value: "How It Works" },
+    { type: "text", value: "MTPX utilizes a Server-Sent Events (SSE) compatible streaming model:" },
+    { type: "list", value: "", items: [
+      "1. Subscription — The client calls `agent.stream()` instead of `agent.run()`.",
+      "2. Generation — As the Lifecycle stages progress, the Event Bus emits typed event objects.",
+      "3. Yielding — The stream iterator yields these events immediately, allowing the client to process them without waiting for the final response synthesis."
+    ]},
+
+    { type: "heading", value: "Code Examples" },
+    { type: "text", value: "Consuming a stream is done using a simple `for` loop over the agent's stream generator." },
+    { type: "code", language: "python", value: `for event in agent.stream("Research the latest news on AI safety."):
+    if event.type == "PLAN_RECEIVED":
+        print(f"Plan formed with {len(event.payload['waves'])} waves.")
+    elif event.type == "TOOL_STARTED":
+        print(f"Executing: {event.payload['tool_id']}...")
+    elif event.type == "FINAL_ANSWER":
+        print(f"Final: {event.payload['text']}")` },
+
+    { type: "heading", value: "Runtime Behavior" },
+    { type: "text", value: "The stream is non-blocking. Even if a tool in Wave 1 is taking 30 seconds to run, the `TOOL_STARTED` event is emitted instantly. The final `SYNTHESIS` event is only yielded after all tools have completed and the LLM has generated the grounded response. If the connection is severed mid-stream, the Runtime continues execution in the background (unless a specific `cancel_on_disconnect` policy is set)." },
+
+    { type: "heading", value: "Best Practices" },
+    { type: "list", value: "", items: [
+      "UI Debouncing — Don't re-render your entire UI for every single event (like sub-token streaming); batch updates where possible.",
+      "Event Mapping — Map MTPX events to a progress bar or status indicator to give users a high-level overview of the task progress.",
+      "Error Handling — Listen for the `EXECUTION_FAILED` event in the stream to provide immediate feedback on tool crashes."
+    ]},
+
+    { type: "heading", value: "Common Mistakes" },
+    { type: "list", value: "", items: [
+      "Blocking the Stream — Performing heavy I/O inside the loop that consumes the events.",
+      "Ignoring Metadata — Missing the `event_id` and `timestamp`, which are critical for reconstructuring the sequence of actions later.",
+      "Infinite Retries — Automatically restarting a failed stream without inspecting the `error` payload in the event."
+    ]},
+
+    { type: "heading", value: "Related Concepts" },
+    { type: "table", headers: ["Event", "Meaning"], rows: [
+      ["INGEST_COMPLETED", "Prompt parsed and session loaded."],
+      ["PLAN_RECEIVED", "The DAG has been generated by the model."],
+      ["TOOL_FINISHED", "A specific tool has returned its output."]
+    ]}
   ],
 
   "obs-tui": [
-    { type: "text", value: "The 'mtp tui' command for interactive agent development." }
+    { type: "text", value: "The MTPX Terminal User Interface (TUI) provides a professional, real-time monitoring dashboard for developers building and debugging agents." },
+
+    { type: "heading", value: "Overview" },
+    { type: "text", value: "Logging to a flat text file is difficult to parse for complex parallel workloads. The `mtp tui` command launches a full-screen interactive monitor that visualizes the current execution DAG, tool outputs, and model reasoning steps in a high-density, structured format." },
+
+    { type: "heading", value: "Why It Exists" },
+    { type: "text", value: "The TUI is the 'Control Room' for MTPX developers. It exists to:" },
+    { type: "list", value: "", items: [
+      "Visualize Parallelism — See exactly which tools are running in parallel and which are waiting in the dependency queue.",
+      "Inspect Payloads — Click into any tool call to see the raw JSON arguments and the subsequent return value.",
+      "Live Tracing — Watch the model's 'Chain of Thought' update in real-time alongside the tool execution logs."
+    ]},
+
+    { type: "heading", value: "How It Works" },
+    { type: "text", value: "The TUI is a standalone observer that connects to the MTPX Event Bus via a local socket or network bridge. It uses the `Rich` and `Textual` libraries to render a high-performance, terminal-based dashboard that handles thousands of events per second with zero lag." },
+
+    { type: "heading", value: "Architecture Flow" },
+    { type: "architecture", value: `[ Agent Process ] ──▶ [ Event Bus ]
+                            │
+                    ( Local Socket )
+                            │
+                    [ MTPX TUI App ]
+                    ┌──────────────┐
+                    │  DAG View    │
+                    ├──────────────┤
+                    │  Log Stream  │
+                    └──────────────┘` },
+
+    { type: "heading", value: "Code Examples" },
+    { type: "text", value: "You can launch the TUI by running the CLI command while your agent is active." },
+    { type: "code", language: "bash", value: `# Launch the monitor and connect to a running agent session
+mtp tui --session-id research_task_42` },
+
+    { type: "heading", value: "Runtime Behavior" },
+    { type: "text", value: "The TUI is 'Read-Only'. It never modifies the agent's state or influences execution. It uses a sliding window buffer for logs to ensure that memory usage remains constant even during long-running sessions with millions of events." }
   ],
 
   "obs-logs": [
-    { type: "text", value: "Configuring structured logging for production monitoring." }
+    { type: "text", value: "Structured Logging provides a machine-readable record of agent activity, optimized for ingestion into ELK, Splunk, or Datadog." },
+    { type: "heading", value: "Overview" },
+    { type: "text", value: "MTPX avoids plain-text logging. Every log entry is a structured JSON object containing the `trace_id`, `span_id`, and `context` required for distributed observability." }
   ],
 
   "obs-traces": [
-    { type: "text", value: "Integrating with OpenTelemetry for distributed tracing." }
+    { type: "text", value: "MTPX supports distributed tracing via OpenTelemetry, allowing you to link model reasoning steps to infrastructure-level spans." },
+    { type: "heading", value: "Overview" },
+    { type: "text", value: "When an agent calls a tool that makes a database query, MTPX propagates the `trace-id` through the entire stack. This allows you to see the complete request journey—from user prompt to SQL query—in tools like Jaeger or Honeycomb." }
   ],
 
   "obs-dag-viz": [
-    { type: "text", value: "Generating visual representations of execution plans." }
+    { type: "text", value: "DAG Visualization generates high-fidelity diagrams of the model's execution plan for documentation and debugging." },
+    { type: "heading", value: "Overview" },
+    { type: "text", value: "Use the built-in `plan.visualize()` method to generate Mermaid or Graphviz representations of the tool dependency graph." }
   ],
 
   // ─── EXAMPLES ───────────────────────────────────────────────
