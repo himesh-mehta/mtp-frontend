@@ -1591,51 +1591,240 @@ runtime = MTPRuntime(..., sandbox=secure_sandbox)
   ],
 
   "event-bus": [
-    { type: "text", value: "How MTPX routes events internally using a pub/sub model for logging and streaming." }
+    { type: "text", value: "The Event Bus is the central nervous system of MTPX, responsible for routing internal state transitions to observers, logs, and real-time streaming interfaces." },
+
+    { type: "heading", value: "Overview" },
+    { type: "text", value: "MTPX utilizes a decoupled Pub/Sub architecture. Components like the Runtime or Policy Engine do not know about your UI or logging stack; they simply emit events to the Event Bus. This allows you to attach any number of observers (Console, Sentry, Webhooks) without modifying the core execution logic." },
+
+    { type: "heading", value: "Why It Exists" },
+    { type: "text", value: "The Event Bus provides the 'Observability' pillar of MTPX. It exists to:" },
+    { type: "list", value: "", items: [
+      "Decouple Concerns — The execution engine stays focused on tools, while the Event Bus handles reporting.",
+      "Real-time Feedback — Enable low-latency TUIs and web dashboards that show 'what the agent is thinking' as it happens.",
+      "Auditability — Create a non-repudiable trace of every action taken by the model."
+    ]},
+
+    { type: "heading", value: "How It Works" },
+    { type: "text", value: "The bus operates on a simple asynchronous dispatch mechanism:" },
+    { type: "list", value: "", items: [
+      "1. Emission — A component (e.g., the Planner) calls `bus.emit(event)` with a payload.",
+      "2. Dispatch — The Bus identifies all registered observers subscribed to that event type.",
+      "3. Consumption — The Bus invokes the `on_event` handler of each observer. In production, this is done in a non-blocking thread to ensure zero performance impact on the agent reasoning loop."
+    ]},
+
+    { type: "heading", value: "Architecture Flow" },
+    { type: "architecture", value: `[ Runtime Engine ]       [ Policy Engine ]
+           │                        │
+           └───────┬────────────────┘
+                   ▼
+             [ EVENT BUS ]
+                   │
+    ┌──────────────┴──────────────┬──────────────┐
+    ▼                             ▼              ▼
+[ Log Observer ]        [ Console TUI ]    [ Webhook ]
+ (File/S3)               (Developer)        (UI/API)` },
+
+    { type: "heading", value: "Code Examples" },
+    { type: "text", value: "Creating a custom observer is as simple as implementing the `on_event` method." },
+    { type: "code", language: "python", value: `from mtp.events import EventBus, Event
+from mtp.observers import BaseObserver
+
+class MySecurityLogger(BaseObserver):
+    def on_event(self, event: Event):
+        if event.type == "POLICY_VIOLATION":
+            send_slack_alert(f"Critical: {event.payload['tool_id']} was blocked!")
+
+# Attach to the agent
+agent = Agent.MTPAgent(..., observers=[MySecurityLogger()])` },
+
+    { type: "heading", value: "Runtime Behavior" },
+    { type: "text", value: "The Event Bus is strictly one-way. Observers can read events but cannot modify the execution state. This ensures that a buggy observer cannot crash the core agent or inject unintended data into the tool loop. Every event emitted by the bus is timestamped and assigned a unique `event_id` and `round_id` for distributed tracing." },
+
+    { type: "heading", value: "Best Practices" },
+    { type: "list", value: "", items: [
+      "Asynchronous Handlers — If your observer performs I/O (like writing to a DB), use the built-in `AsyncObserver` wrapper to prevent stalling the runtime.",
+      "Event Filtering — Subscribe only to the event types you need (e.g., `TOOL_STARTED`, `TOOL_FINISHED`) to reduce overhead in high-traffic systems.",
+      "Structured Payloads — Always treat event payloads as JSON-serializable to ensure compatibility with external monitoring stacks."
+    ]},
+
+    { type: "heading", value: "Common Mistakes" },
+    { type: "list", value: "", items: [
+      "Blocking the Bus — Performing heavy computations directly inside the `on_event` handler.",
+      "Ignoring Metadata — Failing to log the `round_id`, which makes it impossible to link events back to a specific user conversation.",
+      "Over-Subscription — Attaching too many redundant observers in a performance-sensitive environment."
+    ]},
+
+    { type: "heading", value: "Related Concepts" },
+    { type: "table", headers: ["Event Type", "Payload Example"], rows: [
+      ["PLAN_RECEIVED", "{ 'waves': 3, 'actions': 5 }"],
+      ["TOOL_STARTED", "{ 'tool_id': 'calculator', 'args': {...} }"],
+      ["STATE_UPDATED", "{ 'session_id': 'abc', 'round': 2 }"]
+    ]}
   ],
 
   "provider-layer": [
-    { type: "text", value: "Implementation details of the adapter pattern used to bridge LLM vendors and the MTP protocol." }
+    { type: "text", value: "The Provider Layer is the normalization bridge between MTPX and various Large Language Model vendors." },
+
+    { type: "heading", value: "Overview" },
+    { type: "text", value: "Different models speak different 'dialects' of tool-calling. OpenAI uses `tools` and `function_call`, Anthropic uses `tool_use`, and Gemini uses its own SDK format. The Provider Layer abstracts these differences, allowing the rest of the MTPX framework to interact with a single, unified interface." },
+
+    { type: "heading", value: "Why It Exists" },
+    { type: "text", value: "The Provider Layer exists to provide 'Model Portability'. It ensures:" },
+    { type: "list", value: "", items: [
+      "Vendor Neutrality — Change models without changing your tool definitions or runtime logic.",
+      "Schema Normalization — MTPX tools use standard type hints, which the Provider Layer automatically translates into vendor-specific JSON schemas.",
+      "Prompt Consistency — The layer handles system prompt injection and tool-choice formatting consistently across all vendors."
+    ]},
+
+    { type: "heading", value: "How It Works" },
+    { type: "text", value: "The layer follows a 4-step transformation pipeline:" },
+    { type: "list", value: "", items: [
+      "1. Registration — The `ToolRegistry` provides abstract tool specs to the Provider.",
+      "2. Translation — The Provider converts these specs into the vendor's specific tool schema.",
+      "3. Inference — The Provider sends the prompt and tools to the LLM API.",
+      "4. Extraction — The Provider parses the vendor's tool-call response into a typed MTPX `ExecutionPlan`."
+    ]},
+
+    { type: "heading", value: "Architecture Flow" },
+    { type: "architecture", value: `[ MTPX Agent ]
+       │
+       ▼
+ [ BaseProvider ] ◀── [ ToolRegistry ]
+       │
+ ┌─────┴─────┬────────────┐
+ ▼           ▼            ▼
+[ OpenAI ] [ Anthropic ] [ Ollama ]
+ (SDK A)    (SDK B)      (REST API)` },
+
+    { type: "heading", value: "Code Examples" },
+    { type: "text", value: "All providers share the same constructor interface, making them easily interchangeable." },
+    { type: "code", language: "python", value: `from mtp.providers import OpenAI, Anthropic
+
+# These two objects are functionally identical to the MTP Agent
+p1 = OpenAI(model="gpt-4o", api_key="...")
+p2 = Anthropic(model="claude-3-5-sonnet", api_key="...")
+
+# You can swap them at runtime based on task complexity
+provider = p2 if task == "coding" else p1` },
+
+    { type: "heading", value: "Runtime Behavior" },
+    { type: "text", value: "The Provider Layer is responsible for 'Plan Grounding'. If a model hallucinates a tool that doesn't exist in the registry, the Provider Layer is the first line of defense, catching the error and returning a `InvalidToolReference` exception before the Runtime even attempts to start execution." },
+
+    { type: "heading", value: "Best Practices" },
+    { type: "list", value: "", items: [
+      "Unified Tool Specs — Always define tools using MTP's `@tool` decorator to ensure they can be translated to any provider correctly.",
+      "Temperature Tuning — For planning tasks, keep temperature low (0.0 to 0.2) to ensure the model adheres to the structured JSON schema.",
+      "Provider Fallbacks — Implement a fallback provider (e.g., Groq or local Llama-3) to maintain availability during vendor downtime."
+    ]},
+
+    { type: "heading", value: "Common Mistakes" },
+    { type: "list", value: "", items: [
+      "Manual Schema Building — Trying to build OpenAI/Anthropic tool JSONs manually instead of using the `ToolRegistry`.",
+      "Mixing Provider SDKs — Attempting to use the raw `openai` or `anthropic` clients directly inside the agent loop.",
+      "Missing API Keys — Forgetting to set environment variables for the specific provider used."
+    ]},
+
+    { type: "heading", value: "Related Concepts" },
+    { type: "table", headers: ["Provider", "Key Strength"], rows: [
+      ["OpenAI", "Reliable function calling & instruction following."],
+      ["Anthropic", "Large context windows & nuanced reasoning."],
+      ["Groq", "Extreme low-latency tool execution (LPU)."]
+    ]}
   ],
 
   // ─── SDK REFERENCE ──────────────────────────────────────────
 
   "sdk-agent": [
-    { type: "api-method", value: "MTPAgent(provider, tools, instructions, ...)", fields: [
-      { name: "provider", type: "Provider", required: true, description: "The brain of the agent." },
-      { name: "tools", type: "ToolRegistry", required: true, description: "Capabilites registry." }
+    { type: "text", value: "The `MTPAgent` is the primary entry point for orchestrating model reasoning and tool execution." },
+    { type: "api-method", value: "MTPAgent(provider, tools, instructions, observers=None, ...)", fields: [
+      { name: "provider", type: "BaseProvider", required: true, description: "An instance of a model provider (OpenAI, Anthropic, etc.)." },
+      { name: "tools", type: "ToolRegistry | List[Toolkit]", required: true, description: "The collection of tools available to the agent." },
+      { name: "instructions", type: "str", required: false, description: "System-level instructions for the agent's behavior." },
+      { name: "observers", type: "List[BaseObserver]", required: false, description: "Optional list of event listeners." }
     ]},
-    { type: "api-method", value: "agent.run(prompt)", fields: [
-      { name: "prompt", type: "str", required: true, description: "User request." }
-    ], returns: "RunOutput" }
+    { type: "api-method", value: "agent.run(prompt, session_id=None, ...)", fields: [
+      { name: "prompt", type: "str", required: true, description: "The user's request text." },
+      { name: "session_id", type: "str", required: false, description: "The unique ID for maintaining state across rounds." }
+    ], returns: "RunOutput" },
+    { type: "api-method", value: "agent.stream(prompt, ...)", fields: [
+       { name: "prompt", type: "str", required: true, description: "The user's request text." }
+    ], returns: "Iterator[Event]" }
   ],
 
   "sdk-runtime": [
-    { type: "text", value: "Reference for the MTP Runtime engine, responsible for executing ExecutionPlans." }
+    { type: "text", value: "The `MTPRuntime` engine is responsible for the deterministic execution of DAG plans and policy enforcement." },
+    { type: "api-method", value: "MTPRuntime(registry, policy_engine=None, sandbox=None)", fields: [
+      { name: "registry", type: "ToolRegistry", required: true, description: "The registry containing tool handlers." },
+      { name: "policy_engine", type: "PolicyEngine", required: false, description: "The security layer for risk evaluation." },
+      { name: "sandbox", type: "BaseSandbox", required: false, description: "The isolation environment for tool calls." }
+    ]},
+    { type: "api-method", value: "runtime.execute_plan(plan, session=None)", fields: [
+      { name: "plan", type: "ExecutionPlan", required: true, description: "The validated DAG plan to execute." },
+      { name: "session", type: "Session", required: false, description: "The context for state injection." }
+    ], returns: "ExecutionResult" }
   ],
 
   "sdk-tool": [
-    { type: "text", value: "API for defining tools using the @mtp_tool decorator or manual ToolSpec construction." }
+    { type: "text", value: "Tools are defined using the `@mtp_tool` decorator, which extracts metadata and type hints for the Planner." },
+    { type: "api-method", value: "@mtp_tool(name=None, description=None, risk_level=RiskLevel.READ)", fields: [
+      { name: "name", type: "str", required: false, description: "Override the function name sent to the model." },
+      { name: "description", type: "str", required: false, description: "The documentation for the model's reasoning." },
+      { name: "risk_level", type: "RiskLevel", required: false, description: "The security classification of the tool." }
+    ]},
+    { type: "code", language: "python", value: `@mtp_tool(risk_level=RiskLevel.WRITE)
+def write_file(path: str, content: str):
+    """Writes content to a specific filesystem path."""
+    with open(path, "w") as f:
+        f.write(content)` }
   ],
 
   "sdk-session": [
-    { type: "text", value: "Management of agent sessions, persistence layers, and history management." }
+    { type: "text", value: "The `Session` class manages message history and transient state during an agentic round." },
+    { type: "api-method", value: "session.get_history(limit=50)", fields: [
+      { name: "limit", type: "int", required: false, description: "The number of recent messages to retrieve." }
+    ], returns: "List[Message]" },
+    { type: "api-method", value: "session.checkpoint(label=None)", fields: [
+      { name: "label", type: "str", required: false, description: "An optional name for the state snapshot." }
+    ], returns: "None" }
   ],
 
   "sdk-policies": [
-    { type: "text", value: "Reference for PolicyEngine and RiskPolicy configuration." }
+    { type: "text", value: "The `PolicyEngine` evaluates tool calls against a set of predefined security rules." },
+    { type: "api-method", value: "PolicyEngine.add_rule(risk_level, action)", fields: [
+      { name: "risk_level", type: "RiskLevel", required: true, description: "The level to apply the rule to (READ/WRITE/DESTRUCTIVE)." },
+      { name: "action", type: "PolicyAction", required: true, description: "The enforcement action (ALLOW/ASK/DENY)." }
+    ]},
+    { type: "api-method", value: "engine.evaluate(action, context)", fields: [
+      { name: "action", type: "AgentAction", required: true, description: "The proposed tool call." }
+    ], returns: "PolicyResolution" }
   ],
 
   "sdk-events": [
-    { type: "text", value: "Definitions and schemas for all MTP runtime events." }
+    { type: "text", value: "MTPX emits standard events throughout the execution lifecycle for monitoring and debugging." },
+    { type: "table", headers: ["Event Class", "Description"], rows: [
+      ["PlanReceived", "Emitted when the LLM returns its execution DAG."],
+      ["ToolStarted", "Emitted immediately before a tool handler is invoked."],
+      ["ToolFinished", "Emitted after a tool handler returns its result."],
+      ["BatchStarted", "Emitted when a parallel wave of tools begins."]
+    ]}
   ],
 
   "sdk-providers": [
-    { type: "text", value: "Configuration and capability reference for all 15+ supported providers." }
+    { type: "text", value: "Providers implement the `BaseProvider` interface to bridge specific model APIs to MTPX." },
+    { type: "api-method", value: "BaseProvider.generate_plan(prompt, tools, history)", fields: [
+      { name: "prompt", type: "str", required: true, description: "The current user query." },
+      { name: "tools", type: "List[ToolSpec]", required: true, description: "The tool definitions." }
+    ], returns: "ExecutionPlan" }
   ],
 
   "sdk-storage": [
-    { type: "text", value: "Interface definition for SessionStore and built-in database adapters." }
+    { type: "text", value: "Storage adapters allow session data to be persisted to various database backends." },
+    { type: "api-method", value: "SessionStore.save_session(session)", fields: [
+      { name: "session", type: "Session", required: true, description: "The session object to serialize." }
+    ], returns: "None" },
+    { type: "api-method", value: "SessionStore.load_session(session_id)", fields: [
+      { name: "session_id", type: "str", required: true, description: "The unique ID to restore." }
+    ], returns: "Session" }
   ],
 
   // ─── PROVIDERS ──────────────────────────────────────────────
