@@ -1197,23 +1197,397 @@ agent = Agent.MTPAgent(..., observers=[LifecycleObserver()])` },
   // ─── ARCHITECTURE ───────────────────────────────────────────
 
   "execution-flow": [
-    { type: "text", value: "MTPX execution flow is divided into 6 discrete stages to ensure maximum control and predictability." }
+    { type: "text", value: "The Execution Flow represents the deterministic journey of a request from user input to tool execution and grounded response synthesis." },
+
+    { type: "heading", value: "Overview" },
+    { type: "text", value: "Traditional agent loops are often 'black boxes' where the model's reasoning and tool calls are inextricably linked. MTPX breaks this into a pipeline of discrete stages. By separating planning from execution, MTPX provides hooks for validation, policy enforcement, and observability that are impossible in direct-call systems." },
+
+    { type: "heading", value: "Why It Exists" },
+    { type: "text", value: "The execution flow exists to provide a 'Safety Buffer' between model intent and system action. It ensures:" },
+    { type: "list", value: "", items: [
+      "Transactional Integrity — Plans are validated before any tool is invoked.",
+      "Observability — Every stage transition emits a standard event for monitoring.",
+      "Interposability — Security layers can intercept the flow at any stage to deny or modify actions."
+    ]},
+
+    { type: "heading", value: "How It Works" },
+    { type: "text", value: "The flow consists of six discrete gates:" },
+    { type: "list", value: "", items: [
+      "1. Ingest — Normalizing the user prompt and loading session state.",
+      "2. Plan — The LLM generates a structured DAG (Directed Acyclic Graph) of tool calls.",
+      "3. Validate — The Runtime checks the DAG for logical consistency and dependency cycles.",
+      "4. Authorize — The Policy Engine evaluates the risk level of each tool call.",
+      "5. Execute — The Runtime dispatches tools in optimal waves (sequential or parallel).",
+      "6. Synthesize — The results are fed back to the LLM for a final, grounded answer."
+    ]},
+
+    { type: "heading", value: "Architecture Flow" },
+    { type: "architecture", value: `[ User Request ]
+       │
+       ▼
+ [ Context Ingest ] ──▶ [ Persistence Store ]
+       │
+       ▼
+ [ Planner (LLM) ] ──▶ [ Tool Registry ]
+       │
+       ▼
+ [ Execution Plan ] ◀── [ Cycle Validator ]
+       │
+       ▼
+ [ Policy Engine ]  ──▶ [ Risk Policies ]
+       │
+       ▼
+ [ Runtime Engine ] ──▶ [ Tool Sandboxes ]
+       │
+       ▼
+ [ Final Response ]` },
+
+    { type: "heading", value: "Code Examples" },
+    { type: "text", value: "MTPX handles the entire flow internally, but you can inspect the state at any stage using observers." },
+    { type: "code", language: "python", value: `from mtp import Agent
+from mtp.observers import EventType
+
+# A simple observer to log flow transitions
+def flow_logger(event):
+    if event.type == EventType.STAGE_TRANSITION:
+        print(f"[FLOW] Entering {event.payload.stage} stage...")
+
+agent = Agent.MTPAgent(..., observers=[flow_logger])
+agent.run("Analyze the latest server logs and report errors.")` },
+
+    { type: "heading", value: "Runtime Behavior" },
+    { type: "text", value: "The flow is strictly sequential until the 'Execute' stage. If the 'Plan' stage fails (e.g., the model produces invalid JSON), the entire flow is short-circuited. During the 'Execute' stage, the flow may become non-linear as the DAG resolution engine determines which tools can be run in parallel based on their dependency graph." },
+
+    { type: "heading", value: "Best Practices" },
+    { type: "list", value: "", items: [
+      "Context Isolation — Ensure each execution flow starts with a fresh session unless persistence is explicitly required.",
+      "Timeout Policies — Configure per-stage timeouts to prevent a slow LLM response from stalling the entire pipeline.",
+      "Dry Runs — Use the 'Validate' stage to perform 'pre-flight' checks without actually executing tools."
+    ]},
+
+    { type: "heading", value: "Common Mistakes" },
+    { type: "list", value: "", items: [
+      "Mixing Logic — Attempting to handle tool results inside the 'Plan' stage instead of letting the 'Synthesize' stage handle them.",
+      "Ignoring Events — Not monitoring stage transitions, leading to 'silent failures' in complex multi-step tasks.",
+      "Oversized Context — Passing too much history in the 'Ingest' stage, which degrades the Planner's ability to create accurate DAGs."
+    ]},
+
+    { type: "heading", value: "Related Concepts" },
+    { type: "table", headers: ["Stage", "Control Mechanism"], rows: [
+      ["Plan", "Provider Adapter"],
+      ["Authorize", "Policy Engine"],
+      ["Execute", "DAG Runtime"]
+    ]}
   ],
 
   "planner-vs-runtime": [
-    { type: "text", value: "The Planner (LLM) is responsible for 'What to do', while the Runtime (Code) is responsible for 'How to do it safely'." }
+    { type: "text", value: "The Planner and Runtime are the two primary pillars of MTPX, strictly separating 'Reasoning' from 'Execution'." },
+
+    { type: "heading", value: "Overview" },
+    { type: "text", value: "Most agent frameworks treat the model and the code as a single entity. MTPX enforces a 'Chinese Wall' between them. The Planner (LLM) is an untrusted entity that suggests actions, while the Runtime (Code) is the trusted entity that validates and executes those actions." },
+
+    { type: "heading", value: "Why It Exists" },
+    { type: "text", value: "This separation is the core of the MTP security model. It exists to:" },
+    { type: "list", value: "", items: [
+      "Prevent Injection — Even if a model is compromised (Prompt Injection), the Runtime prevents it from calling dangerous tools without authorization.",
+      "Ensure Determinism — The Runtime executes the DAG exactly as planned, regardless of model variations.",
+      "Simplify Debugging — Reasoning errors (Planner) are clearly separated from execution errors (Runtime)."
+    ]},
+
+    { type: "heading", value: "How It Works" },
+    { type: "text", value: "The interaction follows a Request-Plan-Execution-Result (RPER) pattern:" },
+    { type: "list", value: "", items: [
+      "1. Request — The User sends a prompt to the Planner.",
+      "2. Plan — The Planner returns a structured JSON DAG of tool calls (The 'Intent').",
+      "3. Execute — The Runtime receives the intent, checks it against the Tool Registry and Policy Engine, and invokes the tools (The 'Action').",
+      "4. Result — The Runtime feeds the tool outputs back to the Planner for final synthesis."
+    ]},
+
+    { type: "heading", value: "Architecture Flow" },
+    { type: "architecture", value: `      [ PLANNER ]                    [ RUNTIME ]
+    (The Reasoning Layer)          (The Execution Layer)
+           │                              │
+           │  1. Suggests Plan (DAG)      │
+           ├─────────────────────────────▶│
+           │                              │  2. Validates Plan
+           │                              │  3. Enforces Policies
+           │                              │  4. Executes Tools
+           │  5. Returns Raw Results      │
+           │◀─────────────────────────────┤
+           │                              │
+           ▼                              ▼
+    [ Final Synthesis ]           [ State Update ]` },
+
+    { type: "heading", value: "Code Examples" },
+    { type: "text", value: "The separation is reflected in the code through the `Provider` (Planner) and `Runtime` (Executor) classes." },
+    { type: "code", language: "python", value: `# Planner configuration (LLM specific)
+planner = OpenAI(model="gpt-4o", temperature=0)
+
+# Runtime configuration (Execution specific)
+runtime = MTPRuntime(
+    registry=my_tools,
+    policy_engine=strict_policies,
+    sandbox=DockerSandbox()
+)
+
+# The Agent orchestrates the bridge between them
+agent = Agent.MTPAgent(provider=planner, runtime=runtime)` },
+
+    { type: "heading", value: "Runtime Behavior" },
+    { type: "text", value: "The Runtime is effectively 'LLM-blind'. It does not care which model produced the DAG; it only cares if the DAG is logically sound and compliant with local security policies. This allows you to hot-swap planners (e.g., moving from gpt-4 to claude-3) without ever touching your tool execution logic or sandbox configurations." },
+
+    { type: "heading", value: "Best Practices" },
+    { type: "list", value: "", items: [
+      "Zero-Trust Planning — Treat all Planner output as potentially malicious until validated by the Runtime.",
+      "Runtime Constraints — Set hard CPU and memory limits on the Runtime, independent of the Planner's token limits.",
+      "Clear Interface — Ensure tool descriptions in the Planner are descriptive enough to generate valid DAG arguments."
+    ]},
+
+    { type: "heading", value: "Common Mistakes" },
+    { type: "list", value: "", items: [
+      "Logic Leakage — Putting complex business logic inside a Tool Handler instead of letting the Planner orchestrate it via smaller tools.",
+      "Bypassing the Runtime — Allowing the Planner to directly access system APIs without going through the defined MTP toolkit.",
+      "Shared State — Assuming the Planner knows the exact state of the system; always let the Runtime provide the final grounded truth."
+    ]},
+
+    { type: "heading", value: "Related Concepts" },
+    { type: "table", headers: ["Pillar", "Responsibility"], rows: [
+      ["Planner", "Intent Generation, Reasoning, Synthesis"],
+      ["Runtime", "Validation, Execution, Security, Sandboxing"]
+    ]}
   ],
 
   "dag-resolution": [
-    { type: "text", value: "Technical details on topological sorting and parallel task dispatching within the execution engine." }
+    { type: "text", value: "DAG Resolution is the process of decomposing a complex Execution Plan into a sequence of executable waves based on tool dependencies." },
+
+    { type: "heading", value: "Overview" },
+    { type: "text", value: "A standard agent executes tools one-by-one. MTPX, however, treats tool calls as nodes in a Directed Acyclic Graph (DAG). This allows the runtime to identify which tools are independent and can be executed in parallel, and which must wait for the output of a previous node." },
+
+    { type: "heading", value: "Why It Exists" },
+    { type: "text", value: "DAG resolution is the engine behind MTPX's performance and reliability. It provides:" },
+    { type: "list", value: "", items: [
+      "Parallelism — Execute non-dependent tools (e.g., fetching 3 different URLs) simultaneously to reduce latency.",
+      "Deterministic Ordering — Ensure that a 'Summarize' tool never runs before the 'Read' tool has provided its input.",
+      "Cycle Detection — Automatically identify and reject execution plans that contain circular dependencies."
+    ]},
+
+    { type: "heading", value: "How It Works" },
+    { type: "text", value: "The resolution engine performs three primary operations:" },
+    { type: "list", value: "", items: [
+      "1. Dependency Mapping — Parsing the 'depends_on' field of every action in the Execution Plan.",
+      "2. Topological Sort — Sorting the nodes into 'Waves'. Wave 0 contains all nodes with zero dependencies. Wave 1 contains nodes that only depend on Wave 0, and so on.",
+      "3. Sequential Dispatch — The Runtime executes Wave 0 in parallel, waits for all results, injects the outputs into the next wave, and repeats until the graph is exhausted."
+    ]},
+
+    { type: "heading", value: "Architecture Flow" },
+    { type: "architecture", value: `[ Execution Plan ]
+       │
+       ▼
+ [ Graph Builder ] ──▶ [ Cycle Detector ]
+       │
+       ▼
+ [ Topological Sorter ]
+       │
+       ├─▶ [ Wave 0: Parallel Tool Calls ]
+       │      (Tool A, Tool B, Tool C)
+       │
+       ├─▶ [ Wave 1: Dependent Tool Calls ]
+       │      (Tool D -> depends on A)
+       │
+       └─▶ [ Wave 2: Final Synthesis ]
+              (Tool E -> depends on D)` },
+
+    { type: "heading", value: "Code Examples" },
+    { type: "text", value: "The resolution happens automatically, but you can see the wave distribution in the `ExecutionPlan` object." },
+    { type: "code", language: "python", value: `plan = agent.last_plan
+print(f"Total Waves: {len(plan.waves)}")
+
+for i, wave in enumerate(plan.waves):
+    print(f"Wave {i}: {[action.tool_id for action in wave.actions]}")
+
+# Output Example:
+# Wave 0: ['fetch_url_1', 'fetch_url_2']
+# Wave 1: ['summarize_content']` },
+
+    { type: "heading", value: "Runtime Behavior" },
+    { type: "text", value: "During execution, if any tool in Wave N fails, the Runtime immediately halts the resolution. Dependent tools in Wave N+1 are never invoked, preventing 'Cascading Failures'. This ensures that a tool downstream never receives null or invalid input from its dependencies." },
+
+    { type: "heading", value: "Best Practices" },
+    { type: "list", value: "", items: [
+      "Granular Tools — Build small, single-purpose tools. The more granular your tools, the more opportunities the DAG engine has for parallelism.",
+      "Explicit Dependencies — Ensure your Provider is instructed to always specify dependencies in the JSON output.",
+      "Resource Limits — When running large parallel waves, ensure your sandbox has enough concurrent process/thread capacity."
+    ]},
+
+    { type: "heading", value: "Common Mistakes" },
+    { type: "list", value: "", items: [
+      "Circular References — Creating a plan where Tool A depends on B, and B depends on A (The Runtime will catch this during Validation).",
+      "Implicit Dependencies — Assuming a tool will run after another without explicitly defining it in the DAG.",
+      "Wave Bottlenecks — Including one extremely slow tool in an otherwise fast parallel wave, which stalls the entire resolution."
+    ]},
+
+    { type: "heading", value: "Related Concepts" },
+    { type: "table", headers: ["Algorithm", "Application"], rows: [
+      ["Topological Sort", "Determining the execution order of non-cyclic nodes."],
+      ["Kahn's Algorithm", "The specific implementation used for dependency resolution."],
+      ["Wait-For-All", "The synchronization primitive used between execution waves."]
+    ]}
   ],
 
   "state-persistence": [
-    { type: "text", value: "Deep dive into session serialization, message history pruning, and checkpointing." }
+    { type: "text", value: "State Persistence ensures that agents retain memory, context, and checkpoint data across multiple rounds of interaction and system restarts." },
+
+    { type: "heading", value: "Overview" },
+    { type: "text", value: "In production AI systems, statelessness is a liability. MTPX provides a robust persistence layer that serializes the entire agent state—including message history, session variables, and tool execution traces—into a persistent store." },
+
+    { type: "heading", value: "Why It Exists" },
+    { type: "text", value: "Persistence is required for building systems that aren't just 'chatbots' but 'long-running workers'. It provides:" },
+    { type: "list", value: "", items: [
+      "Continuity — An agent can remember a file it created 3 days ago.",
+      "Resilience — If the runtime crashes mid-execution, the agent can be restored from the last known-good checkpoint.",
+      "Auditing — A permanent record of every plan, tool call, and result for compliance and debugging."
+    ]},
+
+    { type: "heading", value: "How It Works" },
+    { type: "text", value: "MTPX uses a 'Session-Based' persistence model:" },
+    { type: "list", value: "", items: [
+      "1. Snapshotting — At the end of every execution round, the `SessionManager` captures the current delta of the agent state.",
+      "2. Serialization — The state is converted into a vendor-neutral format (usually JSON) via the `BaseStorageAdapter`.",
+      "3. Storage — The adapter writes to the configured backend (Postgres, Redis, MongoDB, or local Disk).",
+      "4. Hydration — On the next request, the agent is initialized with the `session_id`, and the storage adapter restores the state."
+    ]},
+
+    { type: "heading", value: "Architecture Flow" },
+    { type: "architecture", value: `[ MTP Agent ] ◀──▶ [ Session Manager ]
+                          │
+            ┌─────────────┴─────────────┐
+            ▼                           ▼
+    [ Memory Buffer ]           [ Storage Adapter ]
+    (L1 Cache: RAM)             (L2 Persist: DB)
+            │                           │
+            └─────────────┬─────────────┘
+                          ▼
+                  [ Persistence DB ]` },
+
+    { type: "heading", value: "Code Examples" },
+    { type: "text", value: "Configuring persistence is done by passing a storage adapter to the agent or session manager." },
+    { type: "code", language: "python", value: `from mtp.storage import PostgresStorage
+from mtp import SessionManager
+
+# 1. Initialize persistent storage
+db = PostgresStorage(connection_string="postgresql://...")
+
+# 2. Attach to the agent
+agent = Agent.MTPAgent(
+    ...,
+    session_id="research_task_45",
+    storage=db
+)
+
+# The agent will now automatically load and save state
+agent.run("Continue where we left off on the market report.")` },
+
+    { type: "heading", value: "Runtime Behavior" },
+    { type: "text", value: "The persistence layer uses 'Atomic Checkpointing'. The state is only updated *after* the `Finalize` stage of the execution lifecycle completes successfully. If a crash occurs during tool execution, the storage remains at the previous round's state, preventing the system from persisting corrupted or incomplete session data." },
+
+    { type: "heading", value: "Best Practices" },
+    { type: "list", value: "", items: [
+      "History Pruning — For long-running sessions, use a `PruningPolicy` to summarize old messages and save context tokens.",
+      "Encrypted Storage — Sensitive session data (like tool outputs containing PII) should be stored in an encrypted database.",
+      "Session TTLs — Set expiration times on sessions to automatically clean up resources for finished tasks."
+    ]},
+
+    { type: "heading", value: "Common Mistakes" },
+    { type: "list", value: "", items: [
+      "Unbounded History — Letting session history grow until it exceeds the model's context window.",
+      "Race Conditions — Attempting to write to the same session ID from two different agent instances simultaneously.",
+      "Leaking State — Forgetting to clear a session's state after a task is completed, leading to context pollution in future runs."
+    ]},
+
+    { type: "heading", value: "Related Concepts" },
+    { type: "table", headers: ["Component", "Function"], rows: [
+      ["Storage Adapter", "The bridge to the physical database."],
+      ["State Hydration", "Loading saved JSON into active Python objects."],
+      ["Pruning Policy", "Strategies for managing context window overflow."]
+    ]}
   ],
 
   "tool-sandboxing": [
-    { type: "text", value: "Isolating tool execution using process sandboxes, Docker, or limited filesystem scopes." }
+    { type: "text", value: "Tool Sandboxing provides secure isolation for tool execution, ensuring that an agent cannot access or damage the host system beyond its explicitly granted permissions." },
+
+    { type: "heading", value: "Overview" },
+    { type: "text", value: "When an LLM generates arguments for a tool, it is effectively generating code that will run on your infrastructure. MTPX treats every tool call as 'Untrusted Input'. Sandboxing is the mechanism that wraps these calls in a protective boundary, limiting their access to CPU, memory, network, and the filesystem." },
+
+    { type: "heading", value: "Why It Exists" },
+    { type: "text", value: "Without sandboxing, a compromised or hallucinating model could inadvertently (or maliciously) delete files, leak credentials, or perform SSRF attacks. Sandboxing provides:" },
+    { type: "list", value: "", items: [
+      "Blast Radius Limitation — If a tool fails or behaves unexpectedly, the damage is contained within the sandbox.",
+      "Resource Governance — Prevent a 'Heavy' tool from consuming all host RAM and crashing the server.",
+      "Security Hardening — Disabling network access for tools that only need to perform local data processing."
+    ]},
+
+    { type: "heading", value: "How It Works" },
+    { type: "text", value: "MTPX supports a tiered sandboxing model:" },
+    { type: "list", value: "", items: [
+      "1. Process Sandbox — Running tools in a separate OS process with restricted environment variables and working directories.",
+      "2. Container Sandbox — Executing tools inside a fresh Docker or Podman container for near-total filesystem isolation.",
+      "3. Virtualized Sandbox — (Coming soon) Micro-VM based isolation (Firecracker) for high-security enterprise environments."
+    ]},
+
+    { type: "heading", value: "Architecture Flow" },
+    { type: "architecture", value: `[ MTP Runtime ]
+       │
+       ▼
+ [ Sandbox Manager ] ◀── [ Resource Limits ]
+       │
+       ├─▶ [ Process Jail ] ──▶ ( Tool A )
+       │      (Restricted FS)
+       │
+       └─▶ [ Docker Container ] ──▶ ( Tool B )
+              (No Network)
+              (256MB RAM Limit)` },
+
+    { type: "heading", value: "Code Examples" },
+    { type: "text", value: "You can configure the global sandbox for the runtime or override it for specific high-risk tools." },
+    { type: "code", language: "python", value: `from mtp.runtime import MTPRuntime
+from mtp.sandbox import DockerSandbox
+
+# 1. Define a strict sandbox
+secure_sandbox = DockerSandbox(
+    image="python:3.11-slim",
+    allow_network=False,
+    mem_limit="512m",
+    workdir="/tmp/agent_workspace"
+)
+
+# 2. Attach to the runtime
+runtime = MTPRuntime(..., sandbox=secure_sandbox)
+
+# Tools executed by this runtime will now run inside isolated containers.` },
+
+    { type: "heading", value: "Runtime Behavior" },
+    { type: "text", value: "The sandbox is initialized immediately before the `Execute` stage. The Runtime mounts only the necessary data into the sandbox environment. Once the tool returns its result, the sandbox is torn down (or reset), and any temporary files created by the tool are automatically purged. This 'Ephemeral execution' pattern ensures no state leaks between different tool calls or user sessions." },
+
+    { type: "heading", value: "Best Practices" },
+    { type: "list", value: "", items: [
+      "Least Privilege — Only grant a tool the minimum permissions it needs. If a tool doesn't need internet access, disable the network in the sandbox config.",
+      "Timeouts — Always set a `max_execution_time` for sandboxed processes to prevent infinite loops (e.g., a model generating `while True: pass`).",
+      "Monitoring — Attach an observer to log sandbox resource usage (CPU/RAM) to identify inefficient tools."
+    ]},
+
+    { type: "heading", value: "Common Mistakes" },
+    { type: "list", value: "", items: [
+      "Shared Workdirs — Using the same local directory for multiple agents, allowing them to see or modify each other's files.",
+      "Environment Leaks — Passing sensitive host environment variables (like DB passwords) into the sandbox unnecessarily.",
+      "Missing Limits — Running unsandboxed code on the host machine during development, which can lead to accidental file deletion."
+    ]},
+
+    { type: "heading", value: "Related Concepts" },
+    { type: "table", headers: ["Sandbox Type", "Isolation Level"], rows: [
+      ["Process", "Low (OS Level)"],
+      ["Docker", "Medium (Kernel Level)"],
+      ["Firecracker", "High (Hardware Level)"]
+    ]}
   ],
 
   "event-bus": [
