@@ -2292,47 +2292,218 @@ mtp tui --session-id research_task_42` },
   ],
 
   "obs-logs": [
-    { type: "text", value: "Structured Logging provides a machine-readable record of agent activity, optimized for ingestion into ELK, Splunk, or Datadog." },
+    { type: "text", value: "Runtime Logs provide a high-performance, structured record of every internal state transition, tool call, and policy resolution in the MTPX ecosystem." },
+
     { type: "heading", value: "Overview" },
-    { type: "text", value: "MTPX avoids plain-text logging. Every log entry is a structured JSON object containing the `trace_id`, `span_id`, and `context` required for distributed observability." }
+    { type: "text", value: "Unlike legacy systems that emit loosely formatted strings, MTPX utilizes 'Structural Logging'. Every log entry is a valid JSON object containing consistent metadata fields. This ensures that logs can be instantly indexed and queried by modern observability platforms like Datadog, Splunk, or ElasticSearch without complex regex parsing." },
+
+    { type: "heading", value: "Why It Exists" },
+    { type: "text", value: "Structured logging is the 'Ground Truth' for post-execution analysis. It exists to:" },
+    { type: "list", value: "", items: [
+      "Accelerate Debugging — Filter logs by `session_id` or `trace_id` to isolate a single conversation across multiple distributed workers.",
+      "Inform Analytics — Aggregate tool usage metrics (e.g., 'how many times was Tool A called in the last hour?') directly from log streams.",
+      "Regulatory Compliance — Maintain a non-repudiable audit trail of system modifications and data access."
+    ]},
+
+    { type: "heading", value: "Log Schema" },
+    { type: "text", value: "A standard MTPX log entry includes the following core fields:" },
+    { type: "code", language: "json", value: `{
+  "timestamp": "2024-05-10T12:00:01.456Z",
+  "level": "INFO",
+  "source": "runtime.executor",
+  "session_id": "user_456_round_2",
+  "trace_id": "5f3a...d4b2",
+  "event": "TOOL_FINISHED",
+  "payload": {
+    "tool_id": "google_search",
+    "duration_ms": 1240,
+    "status": "success"
+  }
+}` },
+
+    { type: "heading", value: "Code Examples" },
+    { type: "text", value: "You can configure the log output destination and format via the global `MTPConfig`." },
+    { type: "code", language: "python", value: `from mtp.utils import configure_logging
+
+# Enable JSON logging to a file for ingestion
+configure_logging(
+    level="DEBUG",
+    format="json",
+    output="agent_activity.log"
+)` },
+
+    { type: "heading", value: "Runtime Behavior" },
+    { type: "text", value: "Logging in MTPX is 'Non-Blocking'. Log entries are written to a high-speed memory buffer and flushed asynchronously to the destination. This ensures that logging never adds latency to the model's reasoning loop or tool execution waves. In extreme high-throughput scenarios, the logger uses backpressure to prevent memory exhaustion." }
   ],
 
   "obs-traces": [
-    { type: "text", value: "MTPX supports distributed tracing via OpenTelemetry, allowing you to link model reasoning steps to infrastructure-level spans." },
+    { type: "text", value: "Execution Traces provide a distributed, parent-child view of the entire agentic request lifecycle, from initial prompt to final database query." },
+
     { type: "heading", value: "Overview" },
-    { type: "text", value: "When an agent calls a tool that makes a database query, MTPX propagates the `trace-id` through the entire stack. This allows you to see the complete request journey—from user prompt to SQL query—in tools like Jaeger or Honeycomb." }
+    { type: "text", value: "MTPX integrates with OpenTelemetry (OTel) to provide 'Context Propagation'. When an agent triggers a tool that calls an external microservice, the MTPX `trace-id` is passed along in the request headers. This allows you to visualize the complete 'Span' in tools like Jaeger, Honeycomb, or AWS X-Ray." },
+
+    { type: "heading", value: "Why It Exists" },
+    { type: "text", value: "Tracing is critical for identifying 'Hidden Latency'. It exists to:" },
+    { type: "list", value: "", items: [
+      "Pinpoint Bottlenecks — Visualize which wave in the DAG is taking the longest and why.",
+      "Understand Dependencies — See exactly which tool outputs influenced the subsequent model reasoning steps.",
+      "Distributed Debugging — Link a failure in a remote tool worker back to the original user request in the frontend."
+    ]},
+
+    { type: "heading", value: "Architecture Flow" },
+    { type: "architecture", value: `[ Frontend ] ──▶ [ MTP Agent ] ──▶ [ Tool Worker ] ──▶ [ Database ]
+      (Span 1)        (Span 2)         (Span 3)          (Span 4)
+      └─────────────────────────────────────────────────────┘
+                             ( TRACE ID: 0xabc123 )` },
+
+    { type: "heading", value: "Code Examples" },
+    { type: "text", value: "Enable OpenTelemetry tracing by providing an exporter to the MTP runtime." },
+    { type: "code", language: "python", value: `from mtp.obs import OTelExporter
+
+# Export traces to a local Jaeger instance
+exporter = OTelExporter(endpoint="http://localhost:4317")
+
+agent = Agent.MTPAgent(..., tracer=exporter)` }
   ],
 
   "obs-dag-viz": [
-    { type: "text", value: "DAG Visualization generates high-fidelity diagrams of the model's execution plan for documentation and debugging." },
+    { type: "text", value: "DAG Visualization provides high-fidelity, graphical representations of the agent's execution plans for documentation and debugging." },
+
     { type: "heading", value: "Overview" },
-    { type: "text", value: "Use the built-in `plan.visualize()` method to generate Mermaid or Graphviz representations of the tool dependency graph." }
+    { type: "text", value: "Reading a JSON plan with 20 nodes is impossible for humans. MTPX provides built-in visualization tools that convert execution DAGs into Mermaid.js, Graphviz, or static PNG diagrams. These diagrams show the dependency flow, parallel waves, and tool risk levels in a single, glanceable view." },
+
+    { type: "heading", value: "Why It Exists" },
+    { type: "text", value: "Visualization is the primary tool for 'Plan Auditing'. It exists to:" },
+    { type: "list", value: "", items: [
+      "Validate Logic — Quickly verify that Tool B is actually waiting for Tool A as intended.",
+      "Document Workflows — Export the model's generated plans as Mermaid charts for internal reports and documentation.",
+      "Interactive Debugging — Highlight failed nodes or blocked paths in a UI during real-time execution."
+    ]},
+
+    { type: "heading", value: "Code Examples" },
+    { type: "text", value: "You can generate a Mermaid diagram string from any `ExecutionPlan` object." },
+    { type: "code", language: "python", value: `plan = agent.last_plan
+mermaid_str = plan.to_mermaid()
+
+print(mermaid_str)
+# Output:
+# graph TD
+#   A[fetch_data] --> B[summarize]
+#   A --> C[extract_pii]` }
   ],
 
   // ─── EXAMPLES ───────────────────────────────────────────────
 
   "example-research": [
-    { type: "text", value: "Research agent using web search and summarization." }
+    { type: "text", value: "A high-performance Research Agent that utilizes parallel web searching, content extraction, and grounding." },
+    { type: "heading", value: "Implementation" },
+    { type: "text", value: "This agent demonstrates the power of DAG resolution by fetching data from multiple sources simultaneously before synthesizing a final report." },
+    { type: "code", language: "python", value: `from mtp import MTPAgent, mtp_tool
+from mtp.providers import OpenAI
+
+@mtp_tool()
+def search_google(query: str):
+    return f"Results for {query}..."
+
+@mtp_tool()
+def fetch_url(url: str):
+    return f"Content of {url}..."
+
+# Setup agent with parallel search capabilities
+agent = MTPAgent(
+    provider=OpenAI(model="gpt-4o"),
+    tools=[search_google, fetch_url]
+)
+
+# This prompt will trigger Wave 0 (multiple fetch_url calls) 
+# and Wave 1 (Synthesis)
+agent.run("Compare the financial results of Apple, Google, and Nvidia for Q3.")` }
   ],
 
   "example-coding": [
-    { type: "text", value: "Agent for automated code generation and test execution." }
+    { type: "text", value: "An Automated Software Engineer capable of writing, testing, and debugging code in an isolated sandbox." },
+    { type: "heading", value: "Implementation" },
+    { type: "text", value: "This pattern uses a `DockerSandbox` to safely execute model-generated tests against a codebase." },
+    { type: "code", language: "python", value: `from mtp import MTPAgent
+from mtp.sandbox import DockerSandbox
+
+# Create a restricted coding environment
+coder_sandbox = DockerSandbox(image="python:3.11-slim")
+
+agent = MTPAgent(
+    provider=Anthropic(model="claude-3-5-sonnet"),
+    tools=coding_toolkit,
+    sandbox=coder_sandbox
+)
+
+agent.run("Fix the bug in utils.py where the date parser fails on leap years.")` }
   ],
 
   "example-filesystem": [
-    { type: "text", value: "Safe file operations with destructive action protection." }
+    { type: "text", value: "A Filesystem Agent with granular risk policies to prevent accidental data loss." },
+    { type: "heading", value: "Implementation" },
+    { type: "code", language: "python", value: `from mtp import MTPAgent, PolicyEngine, RiskLevel
+
+# Define strict policies for the filesystem
+policies = PolicyEngine()
+policies.add_rule(RiskLevel.DESTRUCTIVE, action="DENY")
+policies.add_rule(RiskLevel.WRITE, action="ASK")
+
+agent = MTPAgent(
+    tools=fs_toolkit,
+    policy_engine=policies
+)
+
+# This will be blocked automatically by the policy engine
+agent.run("Delete all files in the /home directory.")` }
   ],
 
   "example-fallback": [
-    { type: "text", value: "Multi-provider setups with automatic failover." }
+    { type: "text", value: "Resilient agent configuration using multi-provider fallback logic for high-availability systems." },
+    { type: "heading", value: "Implementation" },
+    { type: "code", language: "python", value: `from mtp.providers import OpenAI, Groq, FallbackProvider
+
+# Use Groq for speed, fallback to OpenAI if rate-limited
+provider = FallbackProvider(
+    primary=Groq(model="llama-3.3-70b"),
+    secondary=OpenAI(model="gpt-4o")
+)
+
+agent = MTPAgent(provider=provider, tools=my_tools)
+agent.run("Process this large dataset.")` }
   ],
 
   "example-approval": [
-    { type: "text", value: "Workflow requiring manual sign-off for financial transactions." }
+    { type: "text", value: "Human-in-the-Loop workflow for high-stakes financial or infrastructure modifications." },
+    { type: "heading", value: "Implementation" },
+    { type: "code", language: "python", value: `from mtp.safety import SlackApprovalHandler
+
+# Send approval requests to a Slack channel
+slack_gate = SlackApprovalHandler(channel="#ops-approvals")
+
+agent = MTPAgent(
+    tools=payment_tools,
+    approval_handler=slack_gate
+)
+
+# Agent will pause and wait for a Slack button click before sending the money
+agent.run("Transfer $5,000 to the vendor for invoice #123.")` }
   ],
 
   "example-enterprise": [
-    { type: "text", value: "Complete enterprise setup with SQL persistence and RBAC." }
+    { type: "text", value: "A complete Enterprise-Grade setup featuring Postgres persistence, OTel tracing, and RBAC." },
+    { type: "heading", value: "Implementation" },
+    { type: "code", language: "python", value: `from mtp import MTPAgent
+from mtp.storage import PostgresStorage
+from mtp.obs import OTelExporter
+
+agent = MTPAgent(
+    provider=OpenAI(model="gpt-4o"),
+    tools=enterprise_tools,
+    storage=PostgresStorage(dsn="postgresql://..."),
+    tracer=OTelExporter(endpoint="..."),
+    user_roles=["auditor"]
+)` }
   ],
 
   architecture: [
