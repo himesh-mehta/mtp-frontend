@@ -1,0 +1,367 @@
+[
+  {
+    "session_id": "chat-4e83a1f754",
+    "user_id": "tui-user",
+    "metadata": {
+      "tui": {
+        "session_label": null,
+        "backend": "codex",
+        "cwd": "C:\\Users\\prajw\\Downloads\\mtp-frontend",
+        "codex_model": "gpt-5.4-mini",
+        "openai_model": "gpt-5.4-mini",
+        "codex_session_id": "019d91a0-bc8b-7823-9844-b8174ed7e527",
+        "reasoning_effort": "low",
+        "max_rounds": 6,
+        "autoresearch": false,
+        "research_instructions": null,
+        "last_usage_lines": [
+          "tokens(in/out/total/reasoning)=unknown/unknown/unknown/unknown",
+          "context_window=unknown / window=400,000 (gpt-5.4-mini)",
+          "rate_remaining=unknown"
+        ],
+        "turn_count": 1,
+        "updated_at": "2026-04-15 20:22:06",
+        "transcript": [
+          {
+            "prompt": "@README.md tell me what are we working on",
+            "response": "Codex exec failed (exit 1).\n{\"type\":\"thread.started\",\"thread_id\":\"019d91a0-bc8b-7823-9844-b8174ed7e527\"}\n{\"type\":\"turn.started\"}\n{\"type\":\"error\",\"message\":\"You've hit your usage limit. Upgrade to Plus to continue using Codex (https://chatgpt.com/explore/plus), or try again at Apr 20th, 2026 2:26 PM.\"}\n{\"type\":\"turn.failed\",\"error\":{\"message\":\"You've hit your usage limit. Upgrade to Plus to continue using Codex (https://chatgpt.com/explore/plus), or try again at Apr 20th, 2026 2:26 PM.\"}}\nTry: codex login",
+            "backend": "codex",
+            "model": "gpt-5.4-mini",
+            "attachments": [
+              "README.md"
+            ],
+            "warnings": [],
+            "usage_lines": [
+              "tokens(in/out/total/reasoning)=unknown/unknown/unknown/unknown",
+              "context_window=unknown / window=400,000 (gpt-5.4-mini)",
+              "rate_remaining=unknown"
+            ],
+            "created_at": "2026-04-15 20:22:06"
+          }
+        ]
+      }
+    },
+    "messages": [],
+    "runs": [],
+    "created_at": "2026-04-15 20:14:39",
+    "updated_at": "2026-04-15T14:52:06.589352+00:00"
+  },
+  {
+    "session_id": "chat-03c3b7ccd1",
+    "user_id": "tui-user",
+    "metadata": {
+      "tui": {
+        "session_label": null,
+        "backend": "codex",
+        "cwd": "C:\\Users\\prajw\\Downloads\\mtp-frontend",
+        "codex_model": "gpt-5.3-codex",
+        "openai_model": "gpt-5.4-mini",
+        "codex_session_id": null,
+        "reasoning_effort": "medium",
+        "max_rounds": 6,
+        "autoresearch": false,
+        "research_instructions": null,
+        "last_usage_lines": [],
+        "turn_count": 0,
+        "updated_at": "2026-04-15 20:22:45",
+        "transcript": []
+      }
+    },
+    "messages": [],
+    "runs": [],
+    "created_at": "2026-04-15 20:22:45",
+    "updated_at": "2026-04-15T14:52:45.535650+00:00"
+  },
+  {
+    "session_id": "chat-1777a1597b",
+    "user_id": "tui-user",
+    "metadata": {
+      "tui": {
+        "session_label": null,
+        "backend": "codex",
+        "cwd": "C:\\Users\\prajw\\Downloads\\mtp-frontend",
+        "codex_model": "gpt-5.3-codex",
+        "openai_model": "gpt-5.4-mini",
+        "codex_session_id": null,
+        "reasoning_effort": "medium",
+        "max_rounds": 6,
+        "autoresearch": false,
+        "research_instructions": null,
+        "last_usage_lines": [],
+        "turn_count": 0,
+        "updated_at": "2026-04-15 20:23:02",
+        "transcript": []
+      }
+    },
+    "messages": [],
+    "runs": [],
+    "created_at": "2026-04-15 20:23:02",
+    "updated_at": "2026-04-15T14:53:02.230085+00:00"
+  },
+  {
+    "session_id": "chat-cb1ad8c15e",
+    "user_id": "tui-user",
+    "metadata": {
+      "tui": {
+        "session_label": null,
+        "backend": "codex",
+        "cwd": "C:\\Users\\prajw\\Downloads\\mtp-frontend",
+        "codex_model": "gpt-5.4-mini",
+        "openai_model": "gpt-5.4-mini",
+        "codex_session_id": "item_3",
+        "reasoning_effort": "low",
+        "max_rounds": 6,
+        "autoresearch": false,
+        "research_instructions": null,
+        "last_usage_lines": [
+          "tokens(in/out/total/reasoning)=22,404/459/unknown/unknown",
+          "context_window=22,863/400,000 used (5.72%)",
+          "context_remaining=377,137/400,000 (94.28%)",
+          "rate_remaining=unknown"
+        ],
+        "turn_count": 2,
+        "updated_at": "2026-04-15 20:25:56",
+        "transcript": [
+          {
+            "prompt": "@README.md tell me what are we working on",
+            "response": "`README.md` itself is just the default `create-next-app` boilerplate, so it does not describe a real product yet.\n\nFrom the actual app code in [app/page.tsx](/C:/Users/prajw/Downloads/mtp-frontend/app/page.tsx), you\u2019re working on **MTP**, a marketing site for an AI agent orchestration framework. The page says it\u2019s about:\n- orchestrating AI execution\n- generating structured execution plans\n- validating and running tool workflows deterministically\n- managing persistence, policies, and DAG-based task execution\n\nSo the short version is: this repo is a Next.js frontend for promoting and likely controlling **MTP**, a structured agent-execution platform, not just a generic chatbot UI.\n\nIf you want, I can also inspect the rest of the app and tell you what the product seems to do in practice, not just from the landing page.",
+            "backend": "codex",
+            "model": "gpt-5.4-mini",
+            "attachments": [
+              "README.md"
+            ],
+            "warnings": [
+              "2026-04-15T14:54:24.265106Z ERROR codex_core::tools::router: error=`\"C:\\\\windows\\\\System32\\\\WindowsPowerShell\\\\v1.0\\\\powershell.exe\" -Command 'Get-ChildItem -Recurse -File app,components,lib | Select-Object -ExpandProperty FullName'` rejected: blocked by policy"
+            ],
+            "usage_lines": [
+              "tokens(in/out/total/reasoning)=38,843/882/unknown/unknown",
+              "context_window=39,725/400,000 used (9.93%)",
+              "context_remaining=360,275/400,000 (90.07%)",
+              "rate_remaining=unknown"
+            ],
+            "created_at": "2026-04-15 20:24:29"
+          },
+          {
+            "prompt": "can you analyze the codes and update the readme ?",
+            "response": "We\u2019re working on a default `Next.js` app scaffolded with `create-next-app`.\n\nFrom [`README.md`](README.md), the current project is basically the starter template:\n- Run locally with `npm run dev` / `yarn dev` / `pnpm dev` / `bun dev`\n- Edit the main page in `app/page.tsx`\n- It uses `next/font` with the `Geist` font\n- Deployment is intended for Vercel\n\nSo, at the moment, this looks like a fresh frontend repo rather than a product-specific app.",
+            "backend": "codex",
+            "model": "gpt-5.4-mini",
+            "attachments": [],
+            "warnings": [
+              "2026-04-15T14:55:54.040639Z ERROR codex_core::tools::router: error=`\"C:\\\\windows\\\\System32\\\\WindowsPowerShell\\\\v1.0\\\\powershell.exe\" -Command 'Get-ChildItem -Force | Select-Object Name,Mode'` rejected: blocked by policy"
+            ],
+            "usage_lines": [
+              "tokens(in/out/total/reasoning)=22,404/459/unknown/unknown",
+              "context_window=22,863/400,000 used (5.72%)",
+              "context_remaining=377,137/400,000 (94.28%)",
+              "rate_remaining=unknown"
+            ],
+            "created_at": "2026-04-15 20:25:56"
+          }
+        ]
+      }
+    },
+    "messages": [],
+    "runs": [],
+    "created_at": "2026-04-15 20:23:17",
+    "updated_at": "2026-04-15T14:55:56.922455+00:00"
+  },
+  {
+    "session_id": "chat-d22759e65c",
+    "user_id": "tui-user",
+    "metadata": {
+      "tui": {
+        "session_label": null,
+        "backend": "codex",
+        "cwd": "C:\\Users\\prajw\\Downloads\\mtp-frontend",
+        "codex_model": "gpt-5.4-mini",
+        "openai_model": "gpt-5.4-mini",
+        "codex_session_id": "item_48",
+        "reasoning_effort": "low",
+        "codex_sandbox_mode": "workspace-write",
+        "max_rounds": 6,
+        "autoresearch": false,
+        "research_instructions": null,
+        "last_usage_lines": [
+          "tokens(in/out/total/reasoning)=439,577/7,035/unknown/unknown",
+          "context_window=400,000/400,000 used (100.00%)",
+          "context_remaining=0/400,000 (0.00%)",
+          "rate_remaining=unknown"
+        ],
+        "turn_count": 2,
+        "updated_at": "2026-04-16 14:36:59",
+        "transcript": [
+          {
+            "prompt": "i want you to read all the codes of this website and update/ modify our readme.md current readme doesnt contain any information related to the website so analyze , read the codes and update the readme.md",
+            "response": "I read the app, docs, and component code and mapped the actual site:\n\n- Landing page for MTP / Model Tool Protocol\n- Docs hub with dynamic slug pages\n- Dashboard, execution visualizer, and playground routes\n- Shared nav/sidebar components\n- Docs content covering orchestration, execution plans, runtime, providers, policies, persistence, MCP, transports, autoresearch, CLI, and architecture\n\nI could not write the file in this environment because the workspace is read-only, so I could not apply the README change directly. Below is a replacement `README.md` that matches the codebase.\n\n```md\n# MTP Frontend\n\nA Next.js 16 frontend for the MTP Developer Platform, a marketing and documentation site for the Model Tool Protocol.\n\nMTP is presented here as an agent orchestration framework that separates model reasoning from environment execution. The site explains structured execution plans, tool dependency resolution, policy enforcement, provider adapters, persistence, and transport layers.\n\n## What This Site Contains\n\n- A polished landing page that introduces MTP and drives users into docs and product views\n- A documentation system with a sidebar, category grouping, and dynamic slug-based pages\n- A dashboard view showing mock provider health and runtime metrics\n- An execution visualizer that illustrates plan planning and branching\n- A playground that simulates tool selection and agent interaction\n- Shared navigation and UI primitives used across the app\n\n## Tech Stack\n\n- Next.js 16\n- React 19\n- TypeScript\n- Tailwind CSS 4\n- Framer Motion\n- lucide-react\n- clsx\n- tailwind-merge\n\n## Routes\n\n### Public routes\n- `/` - Marketing landing page\n- `/docs` - Redirects to the introduction page\n- `/docs/[slug]` - Dynamic documentation pages\n\n### App routes\n- `/dashboard` - System dashboard with provider health cards\n- `/execution` - Execution flow visualizer\n- `/playground` - Interactive agent playground mockup\n\n## Documentation Sections\n\nThe docs navigation is organized into these groups:\n\n- Getting Started\n- Core Concepts\n- Tools\n- Features\n- Advanced\n- Cookbook\n- Reference\n\nExample doc pages include:\n\n- Introduction\n- Quickstart\n- Installation\n- Agents\n- Execution Plans\n- Runtime Engine\n- Tool Registry\n- Built-in Toolkits\n- Creating Tools\n- MCP Tools\n- Multi-Model Support\n- Policies and Safety\n- Persistence\n- Streaming and Events\n- Transport Layer\n- Autoresearch Mode\n- CLI Reference\n- Agent API\n- Protocol Spec\n- Architecture\n\n## Site Behavior\n\n- The landing page uses a dark visual style with animated background particles and motion-based section reveals.\n- Docs pages render structured content blocks such as text, code samples, lists, callouts, and tables.\n- Docs also include a floating mini-navigation that tracks headings in the current article.\n- The dashboard and execution views are currently UI demos with static data.\n- The playground is a mock interaction surface for tool-enabled agents.\n\n## Project Structure\n\n```text\napp/\n  page.tsx\n  layout.tsx\n  globals.css\n  docs/\n    page.tsx\n    layout.tsx\n    [slug]/page.tsx\n  (app)/\n    layout.tsx\n    dashboard/page.tsx\n    execution/page.tsx\n    playground/page.tsx\n\ncomponents/\n  AnimatedCard.tsx\n  BubbleBackground.tsx\n  CodeBlock.tsx\n  MarketingNavbar.tsx\n  Navbar.tsx\n  Sidebar.tsx\n\nlib/\n  docs-content.ts\n  utils.ts\n```\n\n## Key Files\n\n- `app/page.tsx` - Landing page\n- `app/docs/layout.tsx` - Docs shell with sidebar and top nav\n- `app/docs/[slug]/page.tsx` - Dynamic docs renderer\n- `lib/docs-content.ts` - Docs sidebar structure and page content\n- `components/CodeBlock.tsx` - Syntax-highlighted code block renderer\n- `components/BubbleBackground.tsx` - Animated landing page background\n- `components/AnimatedCard.tsx` - Motion-powered card wrapper\n- `components/Navbar.tsx` - App navigation\n- `components/MarketingNavbar.tsx` - Landing page navigation\n\n## Getting Started\n\n### Install dependencies\n\n```bash\nnpm install\n```\n\n### Run the development server\n\n```bash\nnpm run dev\n```\n\n### Build for production\n\n```bash\nnpm run build\n```\n\n### Start the production server\n\n```bash\nnpm run start\n```\n\n### Lint the project\n\n```bash\nnpm run lint\n```\n\n## Development Notes\n\n- The project uses the Next.js App Router.\n- Global styling and design tokens live in `app/globals.css`.\n- Fonts are loaded through `next/font/google`.\n- Tailwind CSS utility classes are used throughout the UI.\n- The docs content is data-driven from `lib/docs-content.ts`.\n- Some navigation links currently point to UI surfaces that are not implemented in this repo, such as `/support`.\n\n## Repository Purpose\n\nThis repository is a frontend presentation layer for MTP. It is meant to communicate the product narrative, surface docs, and present a coherent interface for the protocol and its tooling ecosystem.\n\n## License\n\nNo license file is present in this repository.\n```\n\nIf you want, I can also turn this into a tighter README with badges, a table of routes, or a more polished contributor-focused version.",
+            "backend": "codex",
+            "model": "gpt-5.4-mini",
+            "attachments": [],
+            "warnings": [
+              "2026-04-15T14:57:33.262952Z ERROR codex_core::tools::router: error=Exit code: 1",
+              "Wall time: 0.7 seconds",
+              "Output:",
+              "Cannot set property. Property setting is supported only on core types in this language mode.",
+              "At line:1 char:1",
+              "+ [Console]::OutputEncoding=[System.Text.Encoding]::UTF8;",
+              "+ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~",
+              "+ CategoryInfo          : InvalidOperation: (:) [], RuntimeException",
+              "+ FullyQualifiedErrorId : PropertySetterNotSupportedInConstrainedLanguage",
+              "Get-ChildItem : Cannot find path 'C:\\Users\\prajw\\Downloads\\mtp-frontend\\node_modules\\next\\dist\\docs\\' because it does",
+              "not exist.",
+              "At line:2 char:1",
+              "+ Get-ChildItem -Force node_modules\\next\\dist\\docs\\",
+              "+ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~",
+              "+ CategoryInfo          : ObjectNotFound: (C:\\Users\\prajw\\...next\\dist\\docs\\:String) [Get-ChildItem], ItemNotFound",
+              "Exception",
+              "+ FullyQualifiedErrorId : PathNotFound,Microsoft.PowerShell.Commands.GetChildItemCommand",
+              "2026-04-15T14:57:36.484552Z ERROR codex_core::tools::router: error=`\"C:\\\\windows\\\\System32\\\\WindowsPowerShell\\\\v1.0\\\\powershell.exe\" -Command 'Get-ChildItem -Recurse -File app,components,lib | Select-Object FullName'` rejected: blocked by policy",
+              "2026-04-15T14:58:00.719962Z ERROR codex_core::tools::router: error=Exit code: 1",
+              "Wall time: 0.9 seconds",
+              "Output:",
+              "Cannot set property. Property setting is supported only on core types in this language mode.",
+              "At line:1 char:1",
+              "+ [Console]::OutputEncoding=[System.Text.Encoding]::UTF8;",
+              "+ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~",
+              "+ CategoryInfo          : InvalidOperation: (:) [], RuntimeException",
+              "+ FullyQualifiedErrorId : PropertySetterNotSupportedInConstrainedLanguage",
+              "Get-Content : An object at the specified path app\\docs\\[slug]\\page.tsx does not exist, or has been filtered by the",
+              "-Include or -Exclude parameter.",
+              "At line:2 char:1",
+              "+ Get-Content 'app\\docs\\[slug]\\page.tsx'",
+              "+ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~",
+              "+ CategoryInfo          : ObjectNotFound: (System.String[]:String[]) [Get-Content], Exception",
+              "+ FullyQualifiedErrorId : ItemNotFound,Microsoft.PowerShell.Commands.GetContentCommand",
+              "2026-04-15T14:58:03.921161Z ERROR codex_core::tools::router: error=Exit code: 1",
+              "Wall time: 0.5 seconds",
+              "Output:",
+              "Cannot set property. Property setting is supported only on core types in this language mode.",
+              "At line:1 char:1",
+              "+ [Console]::OutputEncoding=[System.Text.Encoding]::UTF8;",
+              "+ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~",
+              "+ CategoryInfo          : InvalidOperation: (:) [], RuntimeException",
+              "+ FullyQualifiedErrorId : PropertySetterNotSupportedInConstrainedLanguage",
+              "Get-Content : Missing an argument for parameter 'LiteralPath'. Specify a parameter of type 'System.String[]' and try",
+              "again.",
+              "At line:2 char:38",
+              "+ Get-Content app\\docs\\[slug]\\page.tsx -LiteralPath",
+              "+                                      ~~~~~~~~~~~~",
+              "+ CategoryInfo          : InvalidArgument: (:) [Get-Content], ParameterBindingException",
+              "+ FullyQualifiedErrorId : MissingArgument,Microsoft.PowerShell.Commands.GetContentCommand",
+              "2026-04-15T14:58:12.752591Z ERROR codex_core::tools::router: error=patch rejected: writing is blocked by read-only sandbox; rejected by user approval settings"
+            ],
+            "usage_lines": [
+              "tokens(in/out/total/reasoning)=286,978/4,576/unknown/unknown",
+              "context_window=291,554/400,000 used (72.89%)",
+              "context_remaining=108,446/400,000 (27.11%)",
+              "rate_remaining=unknown"
+            ],
+            "created_at": "2026-04-15 20:28:23"
+          },
+          {
+            "prompt": "continue",
+            "response": "Updated [README.md](C:\\Users\\prajw\\Downloads\\mtp-frontend\\README.md) to match the actual site instead of the default Next.js scaffold.\n\nWhat it now covers:\n- What MTP Frontend is: a marketing + docs site for the Model Tool Protocol\n- The main product idea shown in the code: model reasoning separated from execution\n- The actual routes in the app:\n  - `/`\n  - `/docs`\n  - `/docs/[slug]`\n  - `/dashboard`\n  - `/execution`\n  - `/playground`\n- How the docs system works through `lib/docs-content.ts`\n- The tech stack in this repo\n- Local development and available npm scripts\n- A project structure section that maps to the real files in the codebase\n- Notes about the frontend-only/mock-data nature of the current UI\n\nI didn\u2019t run build/lint checks because this was a documentation-only change.\n\nIf you want, I can also add:\n1. A more polished product-style README with screenshots and feature callouts\n2. Deployment instructions for Vercel or another host\n3. A short \u201cContributing\u201d section tailored to this repo",
+            "backend": "codex",
+            "model": "gpt-5.4-mini",
+            "attachments": [],
+            "warnings": [
+              "2026-04-16T09:05:44.353582Z ERROR codex_core::exec: exec error: windows sandbox: CreateProcessWithLogonW failed: 1056",
+              "2026-04-16T09:05:44.354310Z ERROR codex_core::exec: exec error: windows sandbox: CreateProcessWithLogonW failed: 1056",
+              "2026-04-16T09:05:44.358489Z ERROR codex_core::tools::router: error=execution error: Io(Custom { kind: Other, error: \"windows sandbox: CreateProcessWithLogonW failed: 1056\" })",
+              "2026-04-16T09:05:44.359670Z ERROR codex_core::tools::router: error=execution error: Io(Custom { kind: Other, error: \"windows sandbox: CreateProcessWithLogonW failed: 1056\" })",
+              "2026-04-16T09:05:52.288128Z ERROR codex_core::tools::router: error=Exit code: 1",
+              "Wall time: 0.6 seconds",
+              "Output:",
+              "Get-ChildItem : Cannot find path 'C:\\Users\\prajw\\Downloads\\mtp-frontend\\node_modules\\next\\dist\\docs' because it does",
+              "not exist.",
+              "At line:2 char:1",
+              "+ Get-ChildItem -Force node_modules\\next\\dist\\docs | Select-Object -Fir ...",
+              "+ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~",
+              "+ CategoryInfo          : ObjectNotFound: (C:\\Users\\prajw\\...\\next\\dist\\docs:String) [Get-ChildItem], ItemNotFound",
+              "Exception",
+              "+ FullyQualifiedErrorId : PathNotFound,Microsoft.PowerShell.Commands.GetChildItemCommand",
+              "2026-04-16T09:05:59.725622Z ERROR codex_core::tools::router: error=Exit code: 1",
+              "Wall time: 0.7 seconds",
+              "Output:",
+              "app : The term 'app' is not recognized as the name of a cmdlet, function, script file, or operable program. Check the",
+              "spelling of the name, or if a path was included, verify that the path is correct and try again.",
+              "At line:2 char:18",
+              "+ Get-Content app\\(app)\\layout.tsx",
+              "+                  ~~~",
+              "+ CategoryInfo          : ObjectNotFound: (app:String) [], CommandNotFoundException",
+              "+ FullyQualifiedErrorId : CommandNotFoundException",
+              "2026-04-16T09:06:16.303335Z ERROR codex_core::tools::router: error=Exit code: 1",
+              "Wall time: 0.6 seconds",
+              "Output:",
+              "Previous Codex session could not be resumed; started a new session."
+            ],
+            "usage_lines": [
+              "tokens(in/out/total/reasoning)=439,577/7,035/unknown/unknown",
+              "context_window=400,000/400,000 used (100.00%)",
+              "context_remaining=0/400,000 (0.00%)",
+              "rate_remaining=unknown"
+            ],
+            "created_at": "2026-04-16 14:36:59"
+          }
+        ]
+      }
+    },
+    "messages": [],
+    "runs": [],
+    "created_at": "2026-04-15 20:26:33",
+    "updated_at": "2026-04-16T09:06:59.353179+00:00"
+  },
+  {
+    "session_id": "chat-907be6efba",
+    "user_id": "tui-user",
+    "metadata": {
+      "tui": {
+        "session_label": null,
+        "backend": "codex",
+        "cwd": "C:\\Users\\prajw\\Downloads\\mtp-frontend",
+        "codex_model": "gpt-5.3-codex",
+        "openai_model": "gpt-5.4-mini",
+        "codex_session_id": null,
+        "reasoning_effort": "medium",
+        "max_rounds": 6,
+        "autoresearch": false,
+        "research_instructions": null,
+        "last_usage_lines": [],
+        "turn_count": 0,
+        "updated_at": "2026-04-15 20:32:13",
+        "transcript": []
+      }
+    },
+    "messages": [],
+    "runs": [],
+    "created_at": "2026-04-15 20:32:13",
+    "updated_at": "2026-04-15T15:02:13.809546+00:00"
+  },
+  {
+    "session_id": "chat-8da9e1539c",
+    "user_id": "tui-user",
+    "metadata": {
+      "tui": {
+        "session_label": null,
+        "backend": "codex",
+        "cwd": "C:\\Users\\prajw\\Downloads\\mtp-frontend",
+        "codex_model": "gpt-5.4-mini",
+        "openai_model": "gpt-5.4-mini",
+        "codex_session_id": null,
+        "reasoning_effort": "low",
+        "codex_sandbox_mode": "danger-full-access",
+        "max_rounds": 6,
+        "autoresearch": false,
+        "research_instructions": null,
+        "last_usage_lines": [],
+        "turn_count": 0,
+        "updated_at": "2026-04-16 14:34:30",
+        "transcript": []
+      }
+    },
+    "messages": [],
+    "runs": [],
+    "created_at": "2026-04-16 14:34:19",
+    "updated_at": "2026-04-16T09:04:30.330720+00:00"
+  }
+]
