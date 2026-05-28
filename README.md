@@ -2,7 +2,7 @@
 
 <img src="assets/mtp-logo.png" alt="MTPX Logo" width="120" style="border-radius: 24px; box-shadow: 0 10px 30px rgba(250, 204, 21, 0.2); border: 2px solid rgba(250, 204, 21, 0.4);"/>
 
-# ⚡ MTPX (Model Tool Protocol Extended)
+# ⚡ MTPX (Model Tool Protocol)
 ### Protocol-First Python SDK for AI Agent Tool Orchestration
 
 [![PyPI Version](https://img.shields.io/pypi/v/mtpx?style=flat-square&color=facc15&logo=pypi)](https://pypi.org/project/mtpx/)
