@@ -32,7 +32,7 @@ export default function Dashboard() {
               <Server className="size-5 text-primary" />
               <h2 className="text-sm font-medium text-on-surface-variant uppercase tracking-widest">Providers</h2>
             </div>
-            <p className="text-4xl font-light tracking-tighter">12<span className="text-lg text-on-surface-variant ml-1">online</span></p>
+            <p className="text-4xl font-light tracking-tighter">16<span className="text-lg text-on-surface-variant ml-1">online</span></p>
           </AnimatedCard>
 
           <AnimatedCard className="p-6" delay={0.3}>
