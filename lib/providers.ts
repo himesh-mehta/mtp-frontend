@@ -95,4 +95,115 @@ export const providers: Provider[] = [
       { name: "command-r", contextWindow: "128k", capabilities: ["streaming", "function-calling"] },
     ]
   },
+  {
+    name: "OpenRouter",
+    alias: "OpenRouter",
+    sdkSnippet: "mtpx[openrouter]",
+    modelCount: 3,
+    icon: "🔀",
+    color: "#6366f1",
+    models: [
+      { name: "openai/gpt-4o", contextWindow: "128k", capabilities: ["vision", "streaming", "function-calling"] },
+      { name: "anthropic/claude-3.5-sonnet", contextWindow: "200k", capabilities: ["vision", "streaming", "function-calling"] },
+      { name: "meta-llama/llama-3.3-70b-instruct", contextWindow: "128k", capabilities: ["streaming", "function-calling"] },
+    ]
+  },
+  {
+    name: "DeepSeek",
+    alias: "DeepSeek",
+    sdkSnippet: "mtpx[deepseek]",
+    modelCount: 2,
+    icon: "🔭",
+    color: "#00bcd4",
+    models: [
+      { name: "deepseek-chat", contextWindow: "64k", capabilities: ["streaming", "function-calling"] },
+      { name: "deepseek-reasoner", contextWindow: "64k", capabilities: ["reasoning", "streaming"] },
+    ]
+  },
+  {
+    name: "Together AI",
+    alias: "TogetherAI",
+    sdkSnippet: "mtpx[togetherai]",
+    modelCount: 3,
+    icon: "🤝",
+    color: "#8b5cf6",
+    models: [
+      { name: "llama-3.3-70b-instruct-turbo", contextWindow: "128k", capabilities: ["streaming", "function-calling"] },
+      { name: "mixtral-8x7b-instruct-v0.1", contextWindow: "32k", capabilities: ["streaming"] },
+      { name: "Qwen/Qwen2.5-72B-Instruct-Turbo", contextWindow: "128k", capabilities: ["streaming", "function-calling"] },
+    ]
+  },
+  {
+    name: "Fireworks AI",
+    alias: "FireworksAI",
+    sdkSnippet: "mtpx[fireworksai]",
+    modelCount: 2,
+    icon: "🎆",
+    color: "#ec4899",
+    models: [
+      { name: "accounts/fireworks/models/llama-v3p3-70b-instruct", contextWindow: "128k", capabilities: ["streaming", "function-calling"] },
+      { name: "accounts/fireworks/models/qwen2p5-72b-instruct", contextWindow: "128k", capabilities: ["streaming", "function-calling"] },
+    ]
+  },
+  {
+    name: "Ollama",
+    alias: "Ollama",
+    sdkSnippet: "mtpx[ollama]",
+    modelCount: 3,
+    icon: "🦙",
+    color: "#84cc16",
+    models: [
+      { name: "llama3.3", contextWindow: "128k", capabilities: ["streaming", "function-calling"] },
+      { name: "mistral", contextWindow: "32k", capabilities: ["streaming", "function-calling"] },
+      { name: "qwen2.5", contextWindow: "128k", capabilities: ["streaming", "function-calling"] },
+    ]
+  },
+  {
+    name: "LM Studio",
+    alias: "LMStudio",
+    sdkSnippet: "mtpx[lmstudio]",
+    modelCount: 2,
+    icon: "🖥",
+    color: "#a78bfa",
+    models: [
+      { name: "local models (OpenAI-compat)", contextWindow: "varies", capabilities: ["streaming", "function-calling"] },
+      { name: "lmstudio-community/*", contextWindow: "varies", capabilities: ["streaming"] },
+    ]
+  },
+  {
+    name: "SambaNova",
+    alias: "SambaNova",
+    sdkSnippet: "mtpx[sambanova]",
+    modelCount: 2,
+    icon: "🚀",
+    color: "#f59e0b",
+    models: [
+      { name: "Meta-Llama-3.1-70B-Instruct", contextWindow: "128k", capabilities: ["streaming", "function-calling"] },
+      { name: "DeepSeek-V3", contextWindow: "64k", capabilities: ["streaming", "function-calling"] },
+    ]
+  },
+  {
+    name: "Cerebras",
+    alias: "Cerebras",
+    sdkSnippet: "mtpx[cerebras]",
+    modelCount: 2,
+    icon: "🧊",
+    color: "#0ea5e9",
+    models: [
+      { name: "llama3.1-8b", contextWindow: "8k", capabilities: ["streaming"] },
+      { name: "llama-3.3-70b", contextWindow: "128k", capabilities: ["streaming", "function-calling"] },
+    ]
+  },
+  {
+    name: "Xiaomi",
+    alias: "Xiaomi",
+    sdkSnippet: "mtpx[xiaomi]",
+    modelCount: 2,
+    icon: "📱",
+    color: "#ff6900",
+    models: [
+      { name: "MiLM-7B", contextWindow: "8k", capabilities: ["streaming"] },
+      { name: "local models (OpenAI-compat)", contextWindow: "varies", capabilities: ["streaming"] },
+    ]
+  },
 ];
