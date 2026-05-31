@@ -193,7 +193,7 @@ export const docPages: Record<string, DocContentBlock[]> = {
     { type: "text", value: "A typical MTPX agent setup involves defining a Provider, registering Toolkits, and initializing the MTPAgent orchestrator." },
     { type: "code", language: "python", value: `from mtp import Agent
 from mtp.providers import Anthropic
-from mtp.toolkits import FileToolkit, SearchToolkit
+from mtp.toolkits import FileToolkit, WebsiteToolkit
 
 # 1. Initialize the reasoning engine
 provider = Anthropic(model="claude-3-5-sonnet-latest")
@@ -201,7 +201,7 @@ provider = Anthropic(model="claude-3-5-sonnet-latest")
 # 2. Define the capability registry
 tools = Agent.ToolRegistry()
 tools.register_toolkit_loader("fs", FileToolkit(base_dir="./sandbox"))
-tools.register_toolkit_loader("web", SearchToolkit())
+tools.register_toolkit_loader("web", WebsiteToolkit())
 
 # 3. Initialize the control plane
 agent = Agent.MTPAgent(
@@ -530,29 +530,27 @@ print(f"Agent Response: {response}")` },
 
     { type: "heading", value: "Code Examples" },
     { type: "text", value: "The MTPX Runtime handles graph scheduling automatically. You only need to define the dependency-aware plan." },
-    { type: "code", language: "python", value: `from mtp.runtime import DAGExecutor
+    { type: "code", language: "python", value: `from mtp import Agent, ExecutionPlan, ToolBatch, ToolCall
 
-# Internal representation of a multi-batch execution
-executor = DAGExecutor(plan={
-    "batches": [
-        {
-            "mode": "parallel",
-            "calls": [
-                {"id": "search_1", "name": "web.search", "args": {"q": "MTPX core"}},
-                {"id": "search_2", "name": "web.search", "args": {"q": "MTPX docs"}}
-            ]
-        },
-        {
-            "mode": "sequential",
-            "calls": [
-                {"id": "summary", "name": "nlp.summarize", "args": {"docs": ["$ref:search_1", "$ref:search_2"]}}
-            ]
-        }
-    ]
-})
+# The runtime handles DAG scheduling automatically via execute_plan()
+# Plans are composed of batches — each batch is "parallel" or "sequential"
+plan = ExecutionPlan(batches=[
+    ToolBatch(mode="parallel", calls=[
+        ToolCall(id="search_1", name="web.search", arguments={"q": "MTPX core"}),
+        ToolCall(id="search_2", name="web.search", arguments={"q": "MTPX docs"}),
+    ]),
+    ToolBatch(mode="sequential", calls=[
+        ToolCall(
+            id="summary", name="nlp.summarize",
+            arguments={"docs": [{"$ref": "search_1"}, {"$ref": "search_2"}]},
+            depends_on=["search_1", "search_2"],
+        ),
+    ]),
+])
 
-# Executes using optimal concurrency
-results = await executor.execute_async()` },
+# Execute via the ToolRegistry
+import asyncio
+results = asyncio.run(tools.execute_plan(plan))` },
 
     { type: "heading", value: "Runtime Behavior" },
     { type: "text", value: "If a tool within a parallel batch fails, MTPX enters a 'halt-on-error' state by default. It stops the dispatch of subsequent waves while allowing already running tools in the current wave to complete. This prevents the system from entering a half-executed state with missing dependencies. Detailed error traces are streamed to the Event Bus for debugging." },
@@ -620,20 +618,23 @@ results = await executor.execute_async()` },
 
     { type: "heading", value: "Code Examples" },
     { type: "text", value: "You can initialize a custom Runtime to gain granular control over the execution environment and security policies." },
-    { type: "code", language: "python", value: `from mtp.runtime import Runtime
-from mtp.policies import StrictPolicy
-from mtp.observers import ConsoleObserver
+    { type: "code", language: "python", value: `from mtp import Agent, RiskPolicy, PolicyDecision, ToolRiskLevel
 
-# Initialize the core engine
-runtime = Runtime(
-    policy_engine=StrictPolicy(), # Deny DESTRUCTIVE tools by default
-    observers=[ConsoleObserver()], # Stream logs to terminal
-    max_parallel_tasks=5
-)
+# Configure a strict policy: deny destructive tools, ask for writes
+policy = RiskPolicy(by_risk={
+    ToolRiskLevel.READ_ONLY: PolicyDecision.ALLOW,
+    ToolRiskLevel.WRITE: PolicyDecision.ASK,
+    ToolRiskLevel.DESTRUCTIVE: PolicyDecision.DENY,
+})
 
-# The runtime is typically managed by the Agent, 
-# but can be invoked directly for low-level orchestration.
-results = runtime.execute(execution_plan)` },
+# Per-tool overrides
+policy.by_tool_name["shell.run"] = PolicyDecision.ASK
+
+# Initialize ToolRegistry with the policy
+tools = Agent.ToolRegistry(policy=policy)
+
+# The agent enforces policies during plan execution
+agent = Agent.MTPAgent(provider=provider, tools=tools)` },
 
     { type: "heading", value: "Runtime Behavior" },
     { type: "text", value: "The Runtime Engine is inherently asynchronous and event-driven. It maintains a 'Session Context' that tracks the outputs of every tool call. This context is used to resolve \`$ref\` variables in the plan. If the Runtime encounters a 'Human Approval' policy, it suspends execution, serializes the current state, and waits for an external signal before resuming." },
@@ -696,9 +697,9 @@ results = runtime.execute(execution_plan)` },
 
     { type: "heading", value: "Code Examples" },
     { type: "text", value: "Use the \`@tool\` decorator to register functions. Detailed docstrings are mandatory as they serve as the model's instructions." },
-    { type: "code", language: "python", value: `from mtp import tool
+    { type: "code", language: "python", value: `from mtp import Agent, mtp_tool, ToolRiskLevel
 
-@tool(risk_level="WRITE")
+@mtp_tool(risk_level=ToolRiskLevel.WRITE)
 def save_report(filename: str, content: str) -> str:
     """
     Saves a generated report to the local filesystem.
@@ -711,9 +712,12 @@ def save_report(filename: str, content: str) -> str:
         f.write(content)
     return f"Successfully saved to {filename}"
 
-# Registering a full toolkit
+# Registering via FunctionToolkit
+from mtp import toolkit_from_functions
+toolkit = toolkit_from_functions("reports", save_report)
+
 registry = Agent.ToolRegistry()
-registry.register_tool(save_report)` },
+registry.register_toolkit_loader("reports", toolkit)` },
 
     { type: "heading", value: "Runtime Behavior" },
     { type: "text", value: "When an agent starts, it fetches the 'Active Inventory' from the registry. If a tool requires complex dependencies (like a database driver), the registry can use 'Lazy Loading' to only import the relevant modules when the model actually attempts to include that tool in a plan. This keeps the agent's startup time extremely low." },
@@ -756,10 +760,10 @@ registry.register_tool(save_report)` },
 
     { type: "heading", value: "How It Works" },
     { type: "text", value: "The MTPX Policy Engine evaluates tool calls using a 3-tier risk classification system:" },
-    { type: "table", headers: ["Risk Level", "Description", "Typical Action"], rows: [
+    { type: "table", headers: ["Risk Level", "Description", "Default Action"], rows: [
       ["READ_ONLY", "Safe, non-mutating data retrieval.", "ALLOW"],
-      ["WRITE", "State-changing actions with limited scope.", "ASK (Default)"],
-      ["DESTRUCTIVE", "Permanent or high-impact state changes.", "DENY (Default)"]
+      ["WRITE", "State-changing actions with limited scope.", "ALLOW"],
+      ["DESTRUCTIVE", "Permanent or high-impact state changes.", "ASK (Human Approval)"]
     ]},
 
     { type: "heading", value: "Architecture Flow" },
@@ -777,21 +781,25 @@ registry.register_tool(save_report)` },
 
     { type: "heading", value: "Code Examples" },
     { type: "text", value: "Define a policy by inheriting from `BasePolicy` or using the built-in `StrictPolicy`. Attach it to the Runtime during initialization." },
-    { type: "code", language: "python", value: `from mtp.policies import StrictPolicy, Action
-from mtp import tool
+    { type: "code", language: "python", value: `from mtp import Agent, RiskPolicy, PolicyDecision, ToolRiskLevel, mtp_tool
 
 # 1. Define a tool with a specific risk level
-@tool(risk_level="DESTRUCTIVE")
-def delete_user(user_id: str):
+@mtp_tool(risk_level=ToolRiskLevel.DESTRUCTIVE)
+def delete_user(user_id: str) -> str:
     """Irreversibly deletes a user from the primary database."""
-    pass
+    # ... implementation ...
+    return f"Deleted user {user_id}"
 
 # 2. Configure the policy engine
-policy = StrictPolicy()
-policy.add_override("delete_user", Action.ASK) # Override default DENY to ASK
+policy = RiskPolicy(by_risk={
+    ToolRiskLevel.READ_ONLY: PolicyDecision.ALLOW,
+    ToolRiskLevel.WRITE: PolicyDecision.ALLOW,
+    ToolRiskLevel.DESTRUCTIVE: PolicyDecision.ASK,  # Default: human approval
+})
+policy.by_tool_name["delete_user"] = PolicyDecision.DENY  # Override to deny
 
-# 3. Initialize Runtime with the policy
-runtime = Runtime(policy_engine=policy)` },
+# 3. Initialize ToolRegistry with the policy
+tools = Agent.ToolRegistry(policy=policy)` },
 
     { type: "heading", value: "Runtime Behavior" },
     { type: "text", value: "When the Runtime encounters a tool call, it first resolves the tool's `risk_level` from the registry. The Policy Engine then compares this against the active session rules. If the result is `Action.ASK`, the runtime suspends the current DAG execution wave, emits a `HumanApprovalRequired` event, and waits for a signed authorization token before proceeding." },
@@ -856,18 +864,26 @@ runtime = Runtime(policy_engine=policy)` },
 
     { type: "heading", value: "Code Examples" },
     { type: "text", value: "Configure a session-aware agent by attaching a `SessionManager` with a specific storage adapter." },
-    { type: "code", language: "python", value: `from mtp.sessions import SessionManager
-from mtp.storage import PostgresAdapter
+    { type: "code", language: "python", value: `from mtp import Agent, JsonSessionStore, PostgresSessionStore
+from mtp.providers import OpenAI
 
-# 1. Initialize persistent storage
-storage = PostgresAdapter(dsn="postgresql://user:pass@host/db")
+# 1. Initialize persistent storage (JSON file-based)
+store = JsonSessionStore(db_path="tmp/mtp_json_db")
 
-# 2. Create the session manager
-manager = SessionManager(storage=storage)
+# Or use PostgreSQL:
+# store = PostgresSessionStore(db_url="postgresql://user:pass@host/db")
 
-# 3. Run the agent within a specific session context
-agent = Agent.MTPAgent(provider=p, tools=t, session_manager=manager)
-response = agent.run("Resume the data analysis from yesterday.", session_id="user_123_sess_456")` },
+# 2. Create agent with session store
+agent = Agent.MTPAgent(
+    provider=OpenAI(model="gpt-4o"),
+    tools=tools,
+    session_store=store,
+)
+
+# 3. Run with session persistence
+agent.run("Remember this: project codename is Atlas.", session_id="chat-1", user_id="u1")
+agent.run("What is the project codename?", session_id="chat-1", user_id="u1")
+# -> "The project codename is Atlas."` },
 
     { type: "heading", value: "Runtime Behavior" },
     { type: "text", value: "When a `session_id` is provided, the Runtime first attempts to 'hydrate' its internal state from the Storage Adapter. This populates the `Context Store` with previous tool outputs, allowing the Planner to reference them immediately using the `$ref` syntax. If a session expires or is manually cleared, the Runtime defaults to a 'Cold Start' state." },
@@ -931,19 +947,27 @@ response = agent.run("Resume the data analysis from yesterday.", session_id="use
 
     { type: "heading", value: "Code Examples" },
     { type: "text", value: "Implement an approval handler to capture and resolve 'ASK' signals from the runtime." },
-    { type: "code", language: "python", value: `from mtp.runtime import Runtime, ApprovalHandler
+    { type: "code", language: "python", value: `from mtp import Agent, ToolSpec, ToolCall
 
-class CLIApprovalHandler(ApprovalHandler):
-    def resolve(self, request):
-        print(f"\\n[!] APPROVAL REQUIRED: {request.tool_name}")
-        print(f"Arguments: {request.arguments}")
-        choice = input("Approve? (y/n/r for revise): ")
-        if choice == 'y': return request.approve()
-        if choice == 'r': return request.revise(new_args={"path": "backup.txt"})
-        return request.deny()
+# Define an approval handler function
+def my_approval_handler(spec: ToolSpec, call: ToolCall, args: dict) -> bool:
+    print(f"\\n[!] APPROVAL REQUIRED: {spec.name}")
+    print(f"Arguments: {args}")
+    print(f"Risk Level: {spec.risk_level}")
+    choice = input("Approve? (y/n): ")
+    return choice.lower() == 'y'
 
-runtime = Runtime(approval_handler=CLIApprovalHandler())
-agent = Agent.MTPAgent(runtime=runtime)` },
+# Initialize ToolRegistry with the approval handler
+tools = Agent.ToolRegistry(approval_handler=my_approval_handler)
+
+agent = Agent.MTPAgent(
+    provider=provider,
+    tools=tools,
+    instructions="Use tools when needed.",
+)
+
+# When a DESTRUCTIVE tool is called, the handler will prompt for approval
+response = agent.run("Delete the temporary files.")` },
 
     { type: "heading", value: "Runtime Behavior" },
     { type: "text", value: "When an approval gate is hit, the Runtime does not 'block' the thread. Instead, it completes the current execution round, marks the session as 'INTERRUPTED', and returns control to the caller. The session remains in this state until a resolution is pushed. This allows the host application to handle approvals via webhooks, Slack messages, or dashboard UI elements." },
@@ -1005,21 +1029,29 @@ agent = Agent.MTPAgent(runtime=runtime)` },
 
     { type: "heading", value: "Code Examples" },
     { type: "text", value: "Attach multiple observers to an agent to stream events to different destinations simultaneously." },
-    { type: "code", language: "python", value: `from mtp.observers import ConsoleObserver, LogFileObserver
+    { type: "code", language: "python", value: `from mtp import Agent
 
-# 1. Initialize observers
-tui = ConsoleObserver(show_plans=True, show_results=True)
-logger = LogFileObserver(path="agent.log")
-
-# 2. Setup the agent with observers
 agent = Agent.MTPAgent(
-    provider=p, 
-    tools=t, 
-    observers=[tui, logger]
+    provider=provider,
+    tools=tools,
+    debug_mode=True,  # Enables detailed event logging
 )
 
-# 3. Events will stream automatically during execution
-agent.run("Scan logs and summarize errors.")` },
+# Stream structured runtime events (pretty terminal output)
+agent.print_response(
+    "Scan logs and summarize errors.",
+    max_rounds=4,
+    stream=True,
+    stream_events=True,
+)
+
+# Or get raw JSON events for custom processing:
+for event in agent.run_events("Scan logs and summarize errors.", max_rounds=4):
+    event_type = event.get("type")
+    if event_type == "tool_finished":
+        print(f"Tool {event.get('tool_name')} completed: {event.get('success')}")
+    elif event_type == "text_chunk":
+        print(event.get("chunk", ""), end="")` },
 
     { type: "heading", value: "Runtime Behavior" },
     { type: "text", value: "Event emission is non-blocking. The MTPX Runtime ensures that 'heavy' observers (e.g., those writing to a slow database) do not stall the core execution loop. Every event includes a timestamp and a `round_id`, allowing you to reconstruct the exact timeline of a multi-round execution session." },
@@ -1082,14 +1114,19 @@ agent.run("Scan logs and summarize errors.")` },
 
     { type: "heading", value: "Code Examples" },
     { type: "text", value: "MTPX makes switching providers a matter of configuration. Your tools and runtime logic stay 100% identical." },
-    { type: "code", language: "python", value: `from mtp.providers import OpenAI, Anthropic, Gemini
+    { type: "code", language: "python", value: `from mtp import Agent
+from mtp.providers import OpenAI, Anthropic, Gemini
 
 # Switch between cloud providers with zero logic changes
 # provider = OpenAI(model="gpt-4o")
 # provider = Anthropic(model="claude-3-5-sonnet-latest")
-provider = Gemini(model="gemini-1.5-pro-002")
+provider = Gemini(model="gemini-2.0-flash-exp")
 
-agent = Agent.MTPAgent(provider=provider, tools=my_registry)` },
+tools = Agent.ToolRegistry()
+# ... register toolkits ...
+
+agent = Agent.MTPAgent(provider=provider, tools=tools)
+response = agent.run("Analyze the latest data trends.")` },
 
     { type: "heading", value: "Runtime Behavior" },
     { type: "text", value: "At runtime, the Provider Adapter is responsible for 'Grounded Reasoning'. It ensures the model is aware of the specific types and risk levels of the tools in the registry. If a provider returns a plan that doesn't follow the MTPX protocol (e.g., missing tool IDs or invalid references), the adapter intercepts this and returns a `MalformedPlanError` to the agent loop before execution begins." },
@@ -1158,16 +1195,25 @@ agent = Agent.MTPAgent(provider=provider, tools=my_registry)` },
 
     { type: "heading", value: "Code Examples" },
     { type: "text", value: "You can monitor the lifecycle by attaching an observer that listens for stage transition events." },
-    { type: "code", language: "python", value: `from mtp import Agent, EventType
+    { type: "code", language: "python", value: `from mtp import Agent
 
-class LifecycleObserver:
-    def on_event(self, event):
-        if event.type == EventType.BATCH_STARTED:
-            print(f"Entering EXECUTE phase for wave {event.payload.batch_index}")
-        elif event.type == EventType.PLAN_RECEIVED:
-            print("Entering VALIDATE phase for new execution plan")
+# Monitor the lifecycle via event streaming
+agent = Agent.MTPAgent(
+    provider=provider,
+    tools=tools,
+    debug_mode=True,  # Shows plan_received, tool_started, tool_finished events
+)
 
-agent = Agent.MTPAgent(..., observers=[LifecycleObserver()])` },
+# Events are emitted automatically during run_loop_events()
+for event in agent.run_events("Analyze server logs and report errors.", max_rounds=4):
+    event_type = event.get("type")
+    if event_type == "plan_received":
+        batches = event.get("batches", [])
+        print(f"Plan received: {len(batches)} batches")
+    elif event_type == "tool_started":
+        print(f"Executing: {event.get('tool_name')}")
+    elif event_type == "run_completed":
+        print(f"Done. Total tool calls: {event.get('total_tool_calls')}")` },
 
     { type: "heading", value: "Runtime Behavior" },
     { type: "text", value: "The lifecycle is transactional. If a failure occurs in the VALIDATE or AUTHORIZE stages, the lifecycle is aborted before the EXECUTE stage begins. This 'safe-fail' behavior is what makes MTPX suitable for critical infrastructure where executing a broken or unauthorized plan could have severe consequences." },
@@ -1320,18 +1366,25 @@ agent.run("Analyze the latest server logs and report errors.")` },
 
     { type: "heading", value: "Code Examples" },
     { type: "text", value: "The separation is reflected in the code through the `Provider` (Planner) and `Runtime` (Executor) classes." },
-    { type: "code", language: "python", value: `# Planner configuration (LLM specific)
-planner = OpenAI(model="gpt-4o", temperature=0)
+    { type: "code", language: "python", value: `from mtp import Agent, RiskPolicy, PolicyDecision, ToolRiskLevel
+from mtp.providers import OpenAI
+
+# Planner configuration (LLM specific)
+provider = OpenAI(model="gpt-4o")
 
 # Runtime configuration (Execution specific)
-runtime = MTPRuntime(
-    registry=my_tools,
-    policy_engine=strict_policies,
-    sandbox=DockerSandbox()
-)
+policy = RiskPolicy(by_risk={
+    ToolRiskLevel.DESTRUCTIVE: PolicyDecision.ASK,
+})
+tools = Agent.ToolRegistry(policy=policy)
+# ... register toolkits ...
 
-# The Agent orchestrates the bridge between them
-agent = Agent.MTPAgent(provider=planner, runtime=runtime)` },
+# The Agent orchestrates the bridge between Planner and Runtime
+agent = Agent.MTPAgent(
+    provider=provider,
+    tools=tools,
+    strict_dependency_mode=True,
+)` },
 
     { type: "heading", value: "Runtime Behavior" },
     { type: "text", value: "The Runtime is effectively 'LLM-blind'. It does not care which model produced the DAG; it only cares if the DAG is logically sound and compliant with local security policies. This allows you to hot-swap planners (e.g., moving from gpt-4 to claude-3) without ever touching your tool execution logic or sandbox configurations." },
@@ -1471,21 +1524,23 @@ for i, wave in enumerate(plan.waves):
 
     { type: "heading", value: "Code Examples" },
     { type: "text", value: "Configuring persistence is done by passing a storage adapter to the agent or session manager." },
-    { type: "code", language: "python", value: `from mtp.storage import PostgresStorage
-from mtp import SessionManager
+    { type: "code", language: "python", value: `from mtp import Agent, PostgresSessionStore
+from mtp.providers import OpenAI
 
 # 1. Initialize persistent storage
-db = PostgresStorage(connection_string="postgresql://...")
+store = PostgresSessionStore(db_url="postgresql://user:pass@localhost:5432/mtp")
 
 # 2. Attach to the agent
 agent = Agent.MTPAgent(
-    ...,
-    session_id="research_task_45",
-    storage=db
+    provider=OpenAI(model="gpt-4o"),
+    tools=tools,
+    session_store=store,
 )
 
-# The agent will now automatically load and save state
-agent.run("Continue where we left off on the market report.")` },
+# 3. Run with session persistence — state is auto-saved and restored
+agent.run("Remember this: project codename is Atlas.", session_id="chat-1", user_id="u1")
+agent.run("What is the project codename?", session_id="chat-1", user_id="u1")
+# -> "The project codename is Atlas."` },
 
     { type: "heading", value: "Runtime Behavior" },
     { type: "text", value: "The persistence layer uses 'Atomic Checkpointing'. The state is only updated *after* the `Finalize` stage of the execution lifecycle completes successfully. If a crash occurs during tool execution, the storage remains at the previous round's state, preventing the system from persisting corrupted or incomplete session data." },
@@ -1549,21 +1604,26 @@ agent.run("Continue where we left off on the market report.")` },
 
     { type: "heading", value: "Code Examples" },
     { type: "text", value: "You can configure the global sandbox for the runtime or override it for specific high-risk tools." },
-    { type: "code", language: "python", value: `from mtp.runtime import MTPRuntime
-from mtp.sandbox import DockerSandbox
+    { type: "code", language: "python", value: `from mtp import Agent, RiskPolicy, PolicyDecision, ToolRiskLevel
+from mtp.toolkits import ShellToolkit, FileToolkit
 
-# 1. Define a strict sandbox
-secure_sandbox = DockerSandbox(
-    image="python:3.11-slim",
-    allow_network=False,
-    mem_limit="512m",
-    workdir="/tmp/agent_workspace"
-)
+# MTPX uses policy-based sandboxing rather than container isolation.
+# Restrict what tools can do via risk policies:
+policy = RiskPolicy(by_risk={
+    ToolRiskLevel.READ_ONLY: PolicyDecision.ALLOW,
+    ToolRiskLevel.WRITE: PolicyDecision.ASK,       # Require approval
+    ToolRiskLevel.DESTRUCTIVE: PolicyDecision.DENY, # Block destructive ops
+})
 
-# 2. Attach to the runtime
-runtime = MTPRuntime(..., sandbox=secure_sandbox)
+# Restrict specific tools
+policy.by_tool_name["shell.run"] = PolicyDecision.ASK
 
-# Tools executed by this runtime will now run inside isolated containers.` },
+# Scope toolkits to specific directories
+tools = Agent.ToolRegistry(policy=policy)
+tools.register_toolkit_loader("file", FileToolkit(base_dir="./sandbox"))
+tools.register_toolkit_loader("shell", ShellToolkit(base_dir="./sandbox"))
+
+agent = Agent.MTPAgent(provider=provider, tools=tools)` },
 
     { type: "heading", value: "Runtime Behavior" },
     { type: "text", value: "The sandbox is initialized immediately before the `Execute` stage. The Runtime mounts only the necessary data into the sandbox environment. Once the tool returns its result, the sandbox is torn down (or reset), and any temporary files created by the tool are automatically purged. This 'Ephemeral execution' pattern ensures no state leaks between different tool calls or user sessions." },
@@ -1626,16 +1686,24 @@ runtime = MTPRuntime(..., sandbox=secure_sandbox)
 
     { type: "heading", value: "Code Examples" },
     { type: "text", value: "Creating a custom observer is as simple as implementing the `on_event` method." },
-    { type: "code", language: "python", value: `from mtp.events import EventBus, Event
-from mtp.observers import BaseObserver
+    { type: "code", language: "python", value: `from mtp import Agent
 
-class MySecurityLogger(BaseObserver):
-    def on_event(self, event: Event):
-        if event.type == "POLICY_VIOLATION":
-            send_slack_alert(f"Critical: {event.payload['tool_id']} was blocked!")
+# MTPX uses event streaming via run_events() and print_response()
+# Events are dicts with 'type', 'timestamp', 'run_id', 'sequence', 'data'
 
-# Attach to the agent
-agent = Agent.MTPAgent(..., observers=[MySecurityLogger()])` },
+agent = Agent.MTPAgent(
+    provider=provider,
+    tools=tools,
+    stream_tool_events=True,   # Emit tool_started / tool_finished events
+    stream_tool_results=True,  # Include tool output in events
+)
+
+# Process events programmatically
+for event in agent.run_events("Scan logs and summarize errors.", max_rounds=4):
+    if event.get("type") == "tool_finished" and not event.get("success"):
+        tool_name = event.get("tool_name")
+        error = event.get("error")
+        print(f"Tool {tool_name} failed: {error}")` },
 
     { type: "heading", value: "Runtime Behavior" },
     { type: "text", value: "The Event Bus is strictly one-way. Observers can read events but cannot modify the execution state. This ensures that a buggy observer cannot crash the core agent or inject unintended data into the tool loop. Every event emitted by the bus is timestamped and assigned a unique `event_id` and `round_id` for distributed tracing." },
@@ -1736,95 +1804,141 @@ provider = p2 if task == "coding" else p1` },
 
   "sdk-agent": [
     { type: "text", value: "The `MTPAgent` is the primary entry point for orchestrating model reasoning and tool execution." },
-    { type: "api-method", value: "MTPAgent(provider, tools, instructions, observers=None, ...)", fields: [
-      { name: "provider", type: "BaseProvider", required: true, description: "An instance of a model provider (OpenAI, Anthropic, etc.)." },
-      { name: "tools", type: "ToolRegistry | List[Toolkit]", required: true, description: "The collection of tools available to the agent." },
-      { name: "instructions", type: "str", required: false, description: "System-level instructions for the agent's behavior." },
-      { name: "observers", type: "List[BaseObserver]", required: false, description: "Optional list of event listeners." }
+    { type: "api-method", value: "MTPAgent(provider, tools, instructions=None, ...)", fields: [
+      { name: "provider", type: "ProviderAdapter", required: true, description: "An instance of a model provider (Groq, OpenAI, Anthropic, etc.)." },
+      { name: "tools", type: "ToolRegistry", required: true, description: "The ToolRegistry containing registered toolkits and tools." },
+      { name: "instructions", type: "str", required: false, description: "User-level instructions for the agent's behavior." },
+      { name: "system_instructions", type: "str", required: false, description: "Override the default MTP system prompt." },
+      { name: "debug_mode", type: "bool", required: false, description: "Enable detailed debug logging." },
+      { name: "strict_dependency_mode", type: "bool", required: false, description: "Require explicit $ref/depends_on for same-toolkit batches." },
+      { name: "autoresearch", type: "bool", required: false, description: "Enable persistent execution until agent.terminate() is called." },
+      { name: "session_store", type: "SessionStore", required: false, description: "Persistence backend for conversation history." },
+      { name: "mode", type: "str", required: false, description: "Agent mode: 'standalone', 'member', 'delegator', or 'orchestration'." }
     ]},
-    { type: "api-method", value: "agent.run(prompt, session_id=None, ...)", fields: [
+    { type: "api-method", value: "agent.run(prompt, max_rounds=5, session_id=None, ...)", fields: [
       { name: "prompt", type: "str", required: true, description: "The user's request text." },
-      { name: "session_id", type: "str", required: false, description: "The unique ID for maintaining state across rounds." }
+      { name: "max_rounds", type: "int", required: false, description: "Maximum reasoning-tool loop iterations." },
+      { name: "session_id", type: "str", required: false, description: "Session ID for state persistence." },
+      { name: "tool_call_limit", type: "int", required: false, description: "Maximum total tool calls across all rounds." }
+    ], returns: "str (final text response)" },
+    { type: "api-method", value: "agent.run_output(prompt, max_rounds=5, output_schema=None, ...)", fields: [
+      { name: "prompt", type: "str", required: true, description: "The user's request text." },
+      { name: "output_schema", type: "dict", required: false, description: "JSON Schema to validate the final output." },
+      { name: "input_schema", type: "dict", required: false, description: "JSON Schema to validate the input." }
     ], returns: "RunOutput" },
-    { type: "api-method", value: "agent.stream(prompt, ...)", fields: [
-       { name: "prompt", type: "str", required: true, description: "The user's request text." }
-    ], returns: "Iterator[Event]" }
+    { type: "api-method", value: "agent.print_response(prompt, stream=False, stream_events=False, ...)", fields: [
+      { name: "prompt", type: "str", required: true, description: "The user's request text." },
+      { name: "stream", type: "bool", required: false, description: "Enable token-level streaming." },
+      { name: "stream_events", type: "bool", required: false, description: "Enable structured event streaming." },
+      { name: "event_format", type: "str", required: false, description: "'pretty' (terminal) or 'json' (raw JSON lines)." }
+    ], returns: "None (prints to stdout)" }
   ],
 
   "sdk-runtime": [
-    { type: "text", value: "The `MTPRuntime` engine is responsible for the deterministic execution of DAG plans and policy enforcement." },
-    { type: "api-method", value: "MTPRuntime(registry, policy_engine=None, sandbox=None)", fields: [
-      { name: "registry", type: "ToolRegistry", required: true, description: "The registry containing tool handlers." },
-      { name: "policy_engine", type: "PolicyEngine", required: false, description: "The security layer for risk evaluation." },
-      { name: "sandbox", type: "BaseSandbox", required: false, description: "The isolation environment for tool calls." }
+    { type: "text", value: "The `ToolRegistry` is the execution engine responsible for tool registration, lazy loading, policy enforcement, and plan execution." },
+    { type: "api-method", value: "ToolRegistry(policy=None, approval_handler=None, max_cache_entries=1024)", fields: [
+      { name: "policy", type: "RiskPolicy", required: false, description: "Risk policy for allow/ask/deny decisions." },
+      { name: "approval_handler", type: "Callable", required: false, description: "Function called when a tool triggers an ASK policy." },
+      { name: "max_cache_entries", type: "int", required: false, description: "Maximum cached tool results." }
     ]},
-    { type: "api-method", value: "runtime.execute_plan(plan, session=None)", fields: [
+    { type: "api-method", value: "registry.register_toolkit_loader(name, loader)", fields: [
+      { name: "name", type: "str", required: true, description: "Namespace prefix for the toolkit (e.g. 'calc')." },
+      { name: "loader", type: "ToolkitLoader", required: true, description: "A toolkit loader instance (e.g. CalculatorToolkit())." }
+    ], returns: "None" },
+    { type: "api-method", value: "registry.execute_plan(plan, cancel_checker=None)", fields: [
       { name: "plan", type: "ExecutionPlan", required: true, description: "The validated DAG plan to execute." },
-      { name: "session", type: "Session", required: false, description: "The context for state injection." }
-    ], returns: "ExecutionResult" }
+      { name: "cancel_checker", type: "Callable", required: false, description: "Function returning True to cancel execution." }
+    ], returns: "list[ToolResult]" }
   ],
 
   "sdk-tool": [
     { type: "text", value: "Tools are defined using the `@mtp_tool` decorator, which extracts metadata and type hints for the Planner." },
-    { type: "api-method", value: "@mtp_tool(name=None, description=None, risk_level=RiskLevel.READ)", fields: [
+    { type: "api-method", value: "@mtp_tool(name=None, description=None, risk_level=ToolRiskLevel.READ_ONLY, ...)", fields: [
       { name: "name", type: "str", required: false, description: "Override the function name sent to the model." },
       { name: "description", type: "str", required: false, description: "The documentation for the model's reasoning." },
-      { name: "risk_level", type: "RiskLevel", required: false, description: "The security classification of the tool." }
+      { name: "risk_level", type: "ToolRiskLevel", required: false, description: "The security classification: READ_ONLY, WRITE, or DESTRUCTIVE." },
+      { name: "cache_ttl_seconds", type: "int", required: false, description: "Cache duration for identical calls." },
+      { name: "tags", type: "list[str]", required: false, description: "Metadata tags for filtering." }
     ]},
-    { type: "code", language: "python", value: `@mtp_tool(risk_level=RiskLevel.WRITE)
-def write_file(path: str, content: str):
+    { type: "code", language: "python", value: `from mtp import mtp_tool, ToolRiskLevel
+
+@mtp_tool(risk_level=ToolRiskLevel.WRITE)
+def write_file(path: str, content: str) -> str:
     """Writes content to a specific filesystem path."""
     with open(path, "w") as f:
-        f.write(content)` }
+        f.write(content)
+    return f"Written to {path}"` }
   ],
 
   "sdk-session": [
-    { type: "text", value: "The `Session` class manages message history and transient state during an agentic round." },
-    { type: "api-method", value: "session.get_history(limit=50)", fields: [
-      { name: "limit", type: "int", required: false, description: "The number of recent messages to retrieve." }
-    ], returns: "List[Message]" },
-    { type: "api-method", value: "session.checkpoint(label=None)", fields: [
-      { name: "label", type: "str", required: false, description: "An optional name for the state snapshot." }
-    ], returns: "None" }
+    { type: "text", value: "Session stores persist conversation history and run metadata across process restarts." },
+    { type: "api-method", value: "JsonSessionStore(db_path='tmp/mtp_json_db', session_table='mtp_sessions')", fields: [
+      { name: "db_path", type: "str | Path", required: false, description: "Directory for the JSON session database." },
+      { name: "session_table", type: "str", required: false, description: "Table/collection name for sessions." }
+    ]},
+    { type: "api-method", value: "PostgresSessionStore(db_url, session_table='mtp_sessions')", fields: [
+      { name: "db_url", type: "str", required: true, description: "PostgreSQL connection string." }
+    ]},
+    { type: "api-method", value: "MySQLSessionStore(host, user, password, database, port=3306)", fields: [
+      { name: "host", type: "str", required: true, description: "MySQL host." },
+      { name: "user", type: "str", required: true, description: "MySQL user." },
+      { name: "password", type: "str", required: true, description: "MySQL password." },
+      { name: "database", type: "str", required: true, description: "MySQL database name." }
+    ]}
   ],
 
   "sdk-policies": [
-    { type: "text", value: "The `PolicyEngine` evaluates tool calls against a set of predefined security rules." },
-    { type: "api-method", value: "PolicyEngine.add_rule(risk_level, action)", fields: [
-      { name: "risk_level", type: "RiskLevel", required: true, description: "The level to apply the rule to (READ/WRITE/DESTRUCTIVE)." },
-      { name: "action", type: "PolicyAction", required: true, description: "The enforcement action (ALLOW/ASK/DENY)." }
+    { type: "text", value: "The `RiskPolicy` evaluates tool calls against risk-level rules and per-tool overrides." },
+    { type: "api-method", value: "RiskPolicy(by_risk={...}, by_tool_name={...})", fields: [
+      { name: "by_risk", type: "dict[ToolRiskLevel, PolicyDecision]", required: false, description: "Map risk levels to ALLOW, ASK, or DENY." },
+      { name: "by_tool_name", type: "dict[str, PolicyDecision]", required: false, description: "Per-tool policy overrides." }
     ]},
-    { type: "api-method", value: "engine.evaluate(action, context)", fields: [
-      { name: "action", type: "AgentAction", required: true, description: "The proposed tool call." }
-    ], returns: "PolicyResolution" }
+    { type: "code", language: "python", value: `from mtp import RiskPolicy, PolicyDecision, ToolRiskLevel
+
+policy = RiskPolicy(by_risk={
+    ToolRiskLevel.READ_ONLY: PolicyDecision.ALLOW,
+    ToolRiskLevel.WRITE: PolicyDecision.ALLOW,
+    ToolRiskLevel.DESTRUCTIVE: PolicyDecision.ASK,
+})
+# Per-tool override
+policy.by_tool_name["shell.run"] = PolicyDecision.DENY` }
   ],
 
   "sdk-events": [
     { type: "text", value: "MTPX emits standard events throughout the execution lifecycle for monitoring and debugging." },
-    { type: "table", headers: ["Event Class", "Description"], rows: [
-      ["PlanReceived", "Emitted when the LLM returns its execution DAG."],
-      ["ToolStarted", "Emitted immediately before a tool handler is invoked."],
-      ["ToolFinished", "Emitted after a tool handler returns its result."],
-      ["BatchStarted", "Emitted when a parallel wave of tools begins."]
+    { type: "table", headers: ["Event Type", "Description"], rows: [
+      ["run_started", "Emitted when a new agent run begins."],
+      ["round_started", "Emitted at the start of each reasoning round."],
+      ["llm_response", "Emitted after the provider returns a response."],
+      ["plan_received", "Emitted when the LLM returns its execution DAG."],
+      ["batch_started", "Emitted when a parallel/sequential batch begins."],
+      ["tool_started", "Emitted immediately before a tool handler is invoked."],
+      ["tool_finished", "Emitted after a tool handler returns its result."],
+      ["text_chunk", "Emitted for streaming text tokens."],
+      ["run_completed", "Emitted when the run finishes successfully."],
+      ["run_cancelled", "Emitted when a run is cancelled."],
+      ["run_failed", "Emitted when a run encounters an error."],
+      ["strict_violations", "Emitted when strict dependency mode detects violations."]
     ]}
   ],
 
   "sdk-providers": [
-    { type: "text", value: "Providers implement the `BaseProvider` interface to bridge specific model APIs to MTPX." },
-    { type: "api-method", value: "BaseProvider.generate_plan(prompt, tools, history)", fields: [
-      { name: "prompt", type: "str", required: true, description: "The current user query." },
-      { name: "tools", type: "List[ToolSpec]", required: true, description: "The tool definitions." }
-    ], returns: "ExecutionPlan" }
+    { type: "text", value: "Providers implement the `ProviderAdapter` protocol to bridge specific model APIs to MTPX." },
+    { type: "api-method", value: "ProviderAdapter.next_action(messages, tools) -> AgentAction", fields: [
+      { name: "messages", type: "list[dict]", required: true, description: "The current conversation history." },
+      { name: "tools", type: "list[ToolSpec]", required: true, description: "The tool definitions." }
+    ], returns: "AgentAction (response_text and/or plan)" }
   ],
 
   "sdk-storage": [
     { type: "text", value: "Storage adapters allow session data to be persisted to various database backends." },
-    { type: "api-method", value: "SessionStore.save_session(session)", fields: [
-      { name: "session", type: "Session", required: true, description: "The session object to serialize." }
-    ], returns: "None" },
-    { type: "api-method", value: "SessionStore.load_session(session_id)", fields: [
-      { name: "session_id", type: "str", required: true, description: "The unique ID to restore." }
-    ], returns: "Session" }
+    { type: "api-method", value: "SessionStore.get_session(session_id, user_id=None)", fields: [
+      { name: "session_id", type: "str", required: true, description: "The session ID to look up." },
+      { name: "user_id", type: "str", required: false, description: "Optional user ID filter." }
+    ], returns: "SessionRecord | None" },
+    { type: "api-method", value: "SessionStore.upsert_session(session)", fields: [
+      { name: "session", type: "SessionRecord", required: true, description: "The session record to save." }
+    ], returns: "SessionRecord" }
   ],
 
   // ─── PROVIDERS ──────────────────────────────────────────────
@@ -1911,16 +2025,24 @@ agent = Agent.MTPAgent(provider=provider, tools=my_tools)` }
   ],
 
   "provider-custom": [
-    { type: "text", value: "The `BaseProvider` interface allow you to integrate any internal or proprietary LLM into the MTPX ecosystem." },
+    { type: "text", value: "The `ProviderAdapter` protocol allows you to integrate any internal or proprietary LLM into the MTPX ecosystem." },
     { type: "heading", value: "Implementation" },
-    { type: "text", value: "To add a custom provider, implement the `generate_plan` method. Your class must convert your model's raw output into a valid `ExecutionPlan` object." },
-    { type: "code", language: "python", value: `from mtp.providers import BaseProvider
+    { type: "text", value: "To add a custom provider, implement the `next_action` method. Your class must convert your model's raw output into an `AgentAction` containing either a response text or an `ExecutionPlan`." },
+    { type: "code", language: "python", value: `from mtp import Agent, AgentAction, ProviderAdapter, ToolSpec
 
-class MyPrivateModel(BaseProvider):
-    def generate_plan(self, prompt, tools, history):
+class MyPrivateModel:
+    def next_action(self, messages: list[dict], tools: list[ToolSpec]) -> AgentAction:
         # Your custom API logic here
-        raw_response = call_internal_llm(prompt, tools)
-        return self.parse_mtp_plan(raw_response)` }
+        raw_response = call_internal_llm(messages, tools)
+        # Parse into an AgentAction
+        return AgentAction(response_text=raw_response)
+
+    def finalize(self, messages: list[dict], tool_results) -> str:
+        return "Final response from custom model"
+
+# Use it with the agent
+provider = MyPrivateModel()
+agent = Agent.MTPAgent(provider=provider, tools=my_registry)` }
   ],
 
   // ─── SAFETY ─────────────────────────────────────────────────
@@ -1942,9 +2064,9 @@ class MyPrivateModel(BaseProvider):
     { type: "heading", value: "How It Works" },
     { type: "text", value: "MTPX defines three standard risk levels:" },
     { type: "list", value: "", items: [
-      "1. READ — Non-mutating operations. Examples: `search_web`, `read_file`, `get_weather`. Default: ALWAYS ALLOWED.",
-      "2. WRITE — Mutating but recoverable operations. Examples: `write_file`, `send_email`, `post_tweet`. Default: REQUIRES APPROVAL (ASK).",
-      "3. DESTRUCTIVE — Non-recoverable or high-impact operations. Examples: `delete_file`, `drop_database`, `terminate_instance`. Default: ALWAYS DENIED."
+      "1. READ_ONLY — Non-mutating operations. Examples: `search_web`, `read_file`, `get_weather`. Default: ALLOW.",
+      "2. WRITE — Mutating but recoverable operations. Examples: `write_file`, `send_email`. Default: ALLOW.",
+      "3. DESTRUCTIVE — Non-recoverable or high-impact operations. Examples: `delete_file`, `drop_database`. Default: ASK (Human Approval)."
     ]},
 
     { type: "heading", value: "Architecture Flow" },
@@ -1960,14 +2082,16 @@ class MyPrivateModel(BaseProvider):
 
     { type: "heading", value: "Code Examples" },
     { type: "text", value: "Assigning risk levels is done during tool definition using the `@mtp_tool` decorator." },
-    { type: "code", language: "python", value: `from mtp import mtp_tool, RiskLevel
+    { type: "code", language: "python", value: `from mtp import mtp_tool, ToolRiskLevel
 
-@mtp_tool(risk_level=RiskLevel.DESTRUCTIVE)
-def delete_user_account(user_id: str):
+@mtp_tool(risk_level=ToolRiskLevel.DESTRUCTIVE)
+def delete_user_account(user_id: str) -> str:
     """Deletes a user account permanently. HIGH RISK."""
-    db.users.delete_one({"id": user_id})
+    # ... implementation ...
+    return f"Deleted user {user_id}"
 
-# The runtime will automatically block this unless a specific policy override is provided.` },
+# The runtime will automatically require human approval (ASK) for this tool
+# unless a specific policy override is provided.` },
 
     { type: "heading", value: "Runtime Behavior" },
     { type: "text", value: "Risk levels are immutable once a tool is registered. During the `Authorize` stage of the lifecycle, the Policy Engine inspects the risk level of every action in the DAG. If any action matches a level configured for `DENY`, the entire plan is rejected before a single tool is invoked. If an action matches `ASK`, the runtime pauses and waits for a signal from the `ApprovalHandler`." },
@@ -1987,10 +2111,10 @@ def delete_user_account(user_id: str):
     ]},
 
     { type: "heading", value: "Related Concepts" },
-    { type: "table", headers: ["Level", "Action", "Description"], rows: [
-      ["READ", "ALLOW", "Safe, idempotent data retrieval."],
-      ["WRITE", "ASK", "State-changing but reversible or low-impact."],
-      ["DESTRUCTIVE", "DENY", "Irreversible, high-cost, or critical security risk."]
+    { type: "table", headers: ["Level", "Default", "Description"], rows: [
+      ["READ_ONLY", "ALLOW", "Safe, idempotent data retrieval."],
+      ["WRITE", "ALLOW", "State-changing but reversible or low-impact."],
+      ["DESTRUCTIVE", "ASK", "Irreversible, high-cost, or critical security risk."]
     ]}
   ],
 
@@ -2029,18 +2153,25 @@ def delete_user_account(user_id: str):
 
     { type: "heading", value: "Code Examples" },
     { type: "text", value: "You can implement a custom `ApprovalHandler` to bridge the runtime to a UI or messaging platform like Slack." },
-    { type: "code", language: "python", value: `from mtp.safety import CLIApprovalHandler
+    { type: "code", language: "python", value: `from mtp import Agent, ToolSpec, ToolCall
 
-# A built-in handler that prompts the user in the terminal
-handler = CLIApprovalHandler()
+# Define an approval handler
+def my_approval_handler(spec: ToolSpec, call: ToolCall, args: dict) -> bool:
+    print(f"\\n[!] APPROVAL REQUIRED: {spec.name}")
+    print(f"Arguments: {args}")
+    print(f"Risk Level: {spec.risk_level}")
+    choice = input("Approve? (y/n): ")
+    return choice.lower() == 'y'
 
-# Attach to the agent
+# Attach to the ToolRegistry
+tools = Agent.ToolRegistry(approval_handler=my_approval_handler)
+
 agent = Agent.MTPAgent(
-    ...,
-    approval_handler=handler
+    provider=provider,
+    tools=tools,
 )
 
-# If the agent attempts a WRITE action, it will now pause and wait for you to type 'yes'.` },
+# If the agent attempts a DESTRUCTIVE action, it will pause and wait for approval` },
 
     { type: "heading", value: "Runtime Behavior" },
     { type: "text", value: "While waiting for approval, the MTPX session is 'Frozen'. The message history and tool outputs are preserved in the `SessionStore`. If the agent process restarts, the session can be re-hydrated, and the runtime will check if the pending approval has been resolved. If an approval is `REJECTED`, the entire execution wave is cancelled, and the rejection is fed back to the Planner as a 'Permission Denied' result." },
@@ -2101,18 +2232,26 @@ agent = Agent.MTPAgent(
 
     { type: "heading", value: "Code Examples" },
     { type: "text", value: "Configuring a Docker-based sandbox ensures that tools are completely isolated from your host OS." },
-    { type: "code", language: "python", value: `from mtp.sandbox import DockerSandbox
+    { type: "code", language: "python", value: `from mtp import Agent, RiskPolicy, PolicyDecision, ToolRiskLevel
+from mtp.toolkits import ShellToolkit, FileToolkit
 
-# Create a restricted sandbox environment
-sandbox = DockerSandbox(
-    image="python:3.11-alpine",
-    allow_network=False,
-    cpu_limit=0.5,      # 50% of one core
-    mem_limit="256mb"   # 256MB RAM
-)
+# MTPX uses policy-based sandboxing:
+# Restrict what tools can do via risk policies
+policy = RiskPolicy(by_risk={
+    ToolRiskLevel.READ_ONLY: PolicyDecision.ALLOW,
+    ToolRiskLevel.WRITE: PolicyDecision.ASK,
+    ToolRiskLevel.DESTRUCTIVE: PolicyDecision.DENY,
+})
 
-# Attach to your runtime
-runtime = MTPRuntime(..., sandbox=sandbox)` },
+# Restrict specific tools
+policy.by_tool_name["shell.run"] = PolicyDecision.ASK
+
+# Scope toolkits to specific directories
+tools = Agent.ToolRegistry(policy=policy)
+tools.register_toolkit_loader("file", FileToolkit(base_dir="./sandbox"))
+tools.register_toolkit_loader("shell", ShellToolkit(base_dir="./sandbox"))
+
+agent = Agent.MTPAgent(provider=provider, tools=tools)` },
 
     { type: "heading", value: "Runtime Behavior" },
     { type: "text", value: "The sandbox is 'Just-in-Time' (JIT). Immediately before execution, the Runtime creates the sandbox environment, mounts the necessary tool arguments as JSON files, and executes the handler. Once the tool returns, the sandbox is destroyed. This 'Zero-Trust Lifecycle' ensures that no remnants of previous executions can influence future tool calls, effectively eliminating 'state leakage' attacks." },
@@ -2163,14 +2302,22 @@ runtime = MTPRuntime(..., sandbox=sandbox)` },
 
     { type: "heading", value: "Code Examples" },
     { type: "text", value: "You can define required scopes directly in the tool decorator." },
-    { type: "code", language: "python", value: `@mtp_tool(risk_level=RiskLevel.DESTRUCTIVE, scope="cloud:admin")
-def shutdown_instance(instance_id: str):
-    """Restricted to users with the 'cloud:admin' scope."""
-    aws_client.terminate(instance_id)
+    { type: "code", language: "python", value: `from mtp import mtp_tool, ToolRiskLevel
 
-# Initialize agent with current user roles
-agent = Agent.MTPAgent(..., user_roles=["developer"])
-# Attempting to call shutdown_instance will now return a PERMISSION_DENIED error.` },
+@mtp_tool(risk_level=ToolRiskLevel.DESTRUCTIVE, tags=["cloud", "admin"])
+def shutdown_instance(instance_id: str) -> str:
+    """Restricted to authorized operators. Requires human approval."""
+    # ... implementation ...
+    return f"Shut down instance {instance_id}"
+
+# Use per-tool policy overrides for fine-grained control
+from mtp import RiskPolicy, PolicyDecision
+
+policy = RiskPolicy()
+policy.by_tool_name["shutdown_instance"] = PolicyDecision.ASK  # Require approval
+
+tools = Agent.ToolRegistry(policy=policy)
+agent = Agent.MTPAgent(provider=provider, tools=tools)` },
 
     { type: "heading", value: "Runtime Behavior" },
     { type: "text", value: "Permission checks are 'Fail-Closed'. If a tool requires a scope that the session doesn't explicitly possess, the runtime immediately returns a `PermissionDeniedError` and halts the plan. Unlike `RiskLevel` (which might trigger an approval gate), `Permission` failures are final and cannot be bypassed without updating the user's role." }
